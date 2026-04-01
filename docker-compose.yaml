@@ -6,14 +6,20 @@ services:
     container_name: virtual-tv
     ports:
       - "3336:3000"
+    volumes:
+      - vtv-data:/app/data
     environment:
       - JELLYFIN_URL=${JELLYFIN_URL:-http://10.0.0.227:8096}
       - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
       - PORT=3000
       - NODE_ENV=production
+      - DB_PATH=/app/data/virtual-tv.db
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  vtv-data:

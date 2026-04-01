@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
+import "./db.js"; // Initialize database on startup
 import { jellyfinRouter } from "./routes/jellyfin.js";
 import { iptvRouter } from "./routes/iptv.js";
 import { channelRouter } from "./routes/channels.js";

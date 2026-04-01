@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { JellyfinLibrary, JellyfinItem } from "../shared/types";
+import type { Channel, ChannelFilter, JellyfinLibrary } from "../shared/types";
 
 // ── Neo-Brutalism Dark ──────────────────────────────────────────
 
@@ -13,146 +13,52 @@ const c = {
   textDim: "#888888",
   border: "#e8e8e8",
   black: "#000000",
+  danger: "#FF4444",
+  success: "#00FF00",
 };
 
 const font = "Space Grotesk, sans-serif";
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-function formatRuntime(ticks: number): string {
-  const totalSeconds = Math.floor(ticks / 10_000_000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
-function formatEpisode(item: JellyfinItem): string {
-  if (item.Type !== "Episode") return item.Name;
-  const season = item.ParentIndexNumber;
-  const episode = item.IndexNumber;
-  const tag = season != null && episode != null
-    ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`
-    : "";
-  const series = item.SeriesName || "";
-  return [series, tag, item.Name].filter(Boolean).join(" — ");
-}
-
-// ── SVG Icons ───────────────────────────────────────────────────
-
-function GridIcon({ active }: { active: boolean }) {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={active ? c.black : c.textDim} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
-      <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
-    </svg>
-  );
-}
-
-function ListIcon({ active }: { active: boolean }) {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={active ? c.black : c.textDim} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
-      <line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" />
-      <line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
-    </svg>
-  );
-}
-
 // ── Styles ───────────────────────────────────────────────────────
 
-const styles = {
-  page: {
-    background: c.bg, color: c.text, minHeight: "100vh", fontFamily: font,
-    backgroundImage: "radial-gradient(#ffffff08 1.5px, transparent 1.5px)",
-    backgroundSize: "20px 20px",
-  } as React.CSSProperties,
-
-  header: {
-    display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "16px 24px", borderBottom: `4px solid ${c.border}`,
-    background: c.bg,
-  } as React.CSSProperties,
-
-  title: {
-    margin: 0, fontSize: 24, fontWeight: 800, color: c.text, fontFamily: font,
-    background: c.accent, padding: "4px 14px", border: `4px solid ${c.border}`,
-    lineHeight: 1.3,
-  } as React.CSSProperties,
-
-  sectionLabel: {
-    fontSize: 13, color: c.textDim, marginBottom: 12,
-    textTransform: "uppercase" as const, letterSpacing: "0.15em", fontWeight: 800,
-  } as React.CSSProperties,
-
-  button: {
-    background: c.yellow, border: `4px solid ${c.border}`, borderRadius: 0,
-    padding: "12px 20px", cursor: "pointer", color: c.black,
-    textAlign: "left" as const, fontWeight: 800, fontFamily: font,
-    boxShadow: `4px 4px 0px 0px ${c.border}`,
-    transition: "transform 0.1s, box-shadow 0.1s",
-    textTransform: "uppercase" as const, fontSize: 13,
-  } as React.CSSProperties,
-
-  buttonActive: {
-    background: c.accent, color: c.black,
-    boxShadow: `6px 6px 0px 0px ${c.border}`,
-    transform: "translate(-1px, -1px)",
-  } as React.CSSProperties,
-
-  card: {
-    background: c.surface, border: `4px solid ${c.border}`, borderRadius: 0,
-    boxShadow: `8px 8px 0px 0px ${c.border}`, padding: 16,
-    transition: "transform 0.1s ease-out, box-shadow 0.1s ease-out",
-  } as React.CSSProperties,
-
-  badge: {
-    fontSize: 11, padding: "2px 8px", borderRadius: 0, fontWeight: 800,
-    background: c.accent, color: c.black, border: `2px solid ${c.border}`,
-    textTransform: "uppercase" as const, letterSpacing: "0.05em",
-    fontFamily: font, display: "inline-block",
-  } as React.CSSProperties,
-
-  genreTag: {
-    fontSize: 11, padding: "1px 6px", borderRadius: 0,
-    border: `2px solid ${c.border}`, color: c.textDim, fontWeight: 700,
-    fontFamily: font,
-  } as React.CSSProperties,
-
-  listRow: {
-    display: "flex", alignItems: "center", gap: 16, padding: "12px 16px",
-    background: c.surface, borderBottom: `3px solid ${c.border}`,
-    transition: "background 0.1s",
-  } as React.CSSProperties,
-
-  viewToggle: (active: boolean): React.CSSProperties => ({
-    background: active ? c.yellow : c.surfaceAlt,
-    border: `3px solid ${c.border}`, borderRadius: 0,
-    padding: "6px 8px", cursor: "pointer",
-    boxShadow: active ? `3px 3px 0 ${c.border}` : "none",
-    transition: "all 0.1s",
-    display: "flex", alignItems: "center", justifyContent: "center",
-  }),
+const inputStyle: React.CSSProperties = {
+  background: c.bg,
+  color: c.text,
+  border: `3px solid ${c.border}`,
+  borderRadius: 0,
+  padding: "8px 12px",
+  fontSize: 14,
+  fontFamily: font,
+  fontWeight: 700,
+  outline: "none",
+  width: "100%",
+  boxSizing: "border-box",
 };
 
-interface Status {
-  connected: boolean;
-  serverName?: string;
-  version?: string;
-  error?: string;
-}
+const buttonStyle: React.CSSProperties = {
+  background: c.yellow,
+  border: `3px solid ${c.border}`,
+  borderRadius: 0,
+  padding: "8px 16px",
+  cursor: "pointer",
+  color: c.black,
+  fontWeight: 800,
+  fontFamily: font,
+  fontSize: 13,
+  textTransform: "uppercase",
+  boxShadow: `3px 3px 0px 0px ${c.border}`,
+  transition: "transform 0.1s, box-shadow 0.1s",
+};
 
-// ── App ─────────────────────────────────────────────────────────
+// ── Main App ────────────────────────────────────────────────────
 
 export default function App() {
-  const [status, setStatus] = useState<Status | null>(null);
-  const [libraries, setLibraries] = useState<JellyfinLibrary[]>([]);
-  const [selectedLibrary, setSelectedLibrary] = useState<string | null>(null);
-  const [items, setItems] = useState<JellyfinItem[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [status, setStatus] = useState<{ connected: boolean; serverName?: string } | null>(null);
+
+  const selectedChannel = channels.find((c) => c.id === selectedId) || null;
 
   // Load font
   useEffect(() => {
@@ -166,207 +72,516 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    loadChannels();
     fetch("/api/jellyfin/status")
       .then((r) => r.json())
-      .then((data) => {
-        setStatus(data);
-        if (data.connected) {
-          return fetch("/api/jellyfin/libraries").then((r) => r.json());
-        }
-      })
-      .then((data) => {
-        if (data?.libraries) setLibraries(data.libraries);
-      })
-      .catch(() => setStatus({ connected: false, error: "Failed to reach server" }));
+      .then(setStatus)
+      .catch(() => setStatus({ connected: false }));
   }, []);
 
-  function selectLibrary(itemId: string) {
-    setSelectedLibrary(itemId);
-    setLoading(true);
-    fetch(`/api/jellyfin/items?parentId=${itemId}&limit=50`)
+  function loadChannels() {
+    fetch("/api/channels")
       .then((r) => r.json())
-      .then((data) => {
-        setItems(data.items || []);
-        setTotalCount(data.totalCount || 0);
-      })
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
+      .then((data) => setChannels(data.channels || []))
+      .catch((err) => console.error("Failed to load channels:", err));
+  }
+
+  async function createChannel() {
+    const maxNum = channels.reduce((max, ch) => Math.max(max, ch.number), 0);
+    const body = {
+      name: `Channel ${maxNum + 1}`,
+      number: maxNum + 1,
+      filters: {},
+      shuffleMode: "random",
+    };
+    const res = await fetch("/api/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setChannels((prev) => [...prev, data.channel]);
+      setSelectedId(data.channel.id);
+      setEditing(true);
+    }
+  }
+
+  async function saveChannel(updated: Channel) {
+    const res = await fetch(`/api/channels/${updated.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: updated.name,
+        number: updated.number,
+        filters: updated.filters,
+        shuffleMode: updated.shuffleMode,
+        logoUrl: updated.logoUrl,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setChannels((prev) => prev.map((ch) => (ch.id === data.channel.id ? data.channel : ch)));
+      setEditing(false);
+    }
+  }
+
+  async function deleteChannel(id: string) {
+    const res = await fetch(`/api/channels/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setChannels((prev) => prev.filter((ch) => ch.id !== id));
+      if (selectedId === id) {
+        setSelectedId(null);
+        setEditing(false);
+      }
+    }
   }
 
   return (
-    <div style={styles.page}>
+    <div style={{
+      background: c.bg, color: c.text, minHeight: "100vh", fontFamily: font,
+      backgroundImage: "radial-gradient(#ffffff08 1.5px, transparent 1.5px)",
+      backgroundSize: "20px 20px",
+    }}>
       {/* Header */}
-      <header style={styles.header}>
-        <h1 style={styles.title}>Virtual TV</h1>
+      <header style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "16px 24px", borderBottom: `4px solid ${c.border}`, background: c.bg,
+      }}>
+        <h1 style={{
+          margin: 0, fontSize: 24, fontWeight: 800, color: c.text, fontFamily: font,
+          background: c.accent, padding: "4px 14px", border: `4px solid ${c.border}`, lineHeight: 1.3,
+        }}>Virtual TV</h1>
         <StatusPill status={status} />
       </header>
 
-      <main style={{ maxWidth: 1200, margin: "0 auto", padding: 24 }}>
-        {/* Libraries */}
-        <div style={styles.sectionLabel}>Libraries</div>
-        {libraries.length === 0 && status?.connected && (
-          <p style={{ color: c.textDim }}>No libraries found.</p>
-        )}
-        {!status?.connected && status !== null && (
-          <p style={{ color: c.accent, fontWeight: 800 }}>
-            Not connected to Jellyfin.
-          </p>
-        )}
-        <div style={{ display: "flex", gap: 12, marginBottom: 32, flexWrap: "wrap" }}>
-          {libraries.map((lib) => {
-            const active = selectedLibrary === lib.ItemId;
-            return (
-              <button
-                key={lib.ItemId}
-                onClick={() => selectLibrary(lib.ItemId)}
-                style={{ ...styles.button, ...(active ? styles.buttonActive : {}) }}
-              >
-                <div>{lib.Name}</div>
-                <div style={{ fontSize: 10, color: active ? c.black : c.textDim, marginTop: 2, fontWeight: 700 }}>
-                  {lib.CollectionType}
+      <div style={{ display: "flex", height: "calc(100vh - 61px)" }}>
+        {/* Left panel: Channel list */}
+        <div style={{
+          width: 300, borderRight: `4px solid ${c.border}`, display: "flex", flexDirection: "column",
+          background: c.bg,
+        }}>
+          <div style={{ padding: 16 }}>
+            <button onClick={createChannel} style={{ ...buttonStyle, width: "100%", padding: "12px 16px" }}>
+              + New Channel
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {channels.map((ch) => {
+              const active = selectedId === ch.id;
+              return (
+                <div
+                  key={ch.id}
+                  onClick={() => { setSelectedId(ch.id); setEditing(false); }}
+                  style={{
+                    padding: "12px 16px", cursor: "pointer",
+                    background: active ? c.surface : "transparent",
+                    borderLeft: active ? `4px solid ${c.accent}` : "4px solid transparent",
+                    borderBottom: `2px solid ${c.border}20`,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{
+                      color: c.black, fontSize: 12, fontWeight: 800, fontFamily: font,
+                      background: c.yellow, border: `2px solid ${c.border}`,
+                      padding: "1px 6px", minWidth: 28, textAlign: "center",
+                    }}>
+                      {ch.number}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700 }}>{ch.name}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: c.textDim, marginTop: 4, marginLeft: 44, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    {ch.shuffleMode} · {summarizeFilters(ch.filters)}
+                  </div>
                 </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Items */}
-        {selectedLibrary && (
-          <>
-            <div style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              marginBottom: 12,
-            }}>
-              <div style={styles.sectionLabel}>
-                Items {totalCount > 0 && (
-                  <span style={{ color: c.accent }}>({totalCount})</span>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => setViewMode("grid")} style={styles.viewToggle(viewMode === "grid")} title="Grid view">
-                  <GridIcon active={viewMode === "grid"} />
-                </button>
-                <button onClick={() => setViewMode("list")} style={styles.viewToggle(viewMode === "list")} title="List view">
-                  <ListIcon active={viewMode === "list"} />
-                </button>
-              </div>
-            </div>
-
-            {loading ? (
-              <p style={{ color: c.textDim }}>Loading...</p>
-            ) : viewMode === "grid" ? (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-                gap: 12,
-              }}>
-                {items.map((item) => {
-                  const hovered = hoveredCard === item.Id;
-                  return (
-                    <div
-                      key={item.Id}
-                      onMouseEnter={() => setHoveredCard(item.Id)}
-                      onMouseLeave={() => setHoveredCard(null)}
-                      style={{
-                        ...styles.card,
-                        ...(hovered ? {
-                          transform: "translate(-2px, -2px)",
-                          boxShadow: `10px 10px 0px 0px ${c.border}`,
-                        } : {}),
-                      }}
-                    >
-                      <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14, color: c.text }}>
-                        {formatEpisode(item)}
-                      </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                        <span style={styles.badge}>{item.Type}</span>
-                        {item.RunTimeTicks > 0 && (
-                          <span style={{ fontSize: 12, color: c.textDim }}>
-                            {formatRuntime(item.RunTimeTicks)}
-                          </span>
-                        )}
-                      </div>
-                      {item.Genres && item.Genres.length > 0 && (
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {item.Genres.slice(0, 4).map((g) => (
-                            <span key={g} style={styles.genreTag}>{g}</span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ border: `4px solid ${c.border}` }}>
-                {items.map((item, i) => {
-                  const hovered = hoveredCard === item.Id;
-                  return (
-                    <div
-                      key={item.Id}
-                      onMouseEnter={() => setHoveredCard(item.Id)}
-                      onMouseLeave={() => setHoveredCard(null)}
-                      style={{
-                        ...styles.listRow,
-                        background: hovered ? c.yellow : (i % 2 === 0 ? c.surface : c.surfaceAlt),
-                        color: hovered ? c.black : c.text,
-                        ...(i === items.length - 1 ? { borderBottom: "none" } : {}),
-                      }}
-                    >
-                      <span style={{ ...styles.badge, flexShrink: 0, minWidth: 56, textAlign: "center" as const }}>
-                        {item.Type}
-                      </span>
-                      <span style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>
-                        {formatEpisode(item)}
-                      </span>
-                      {item.Genres && item.Genres.length > 0 && (
-                        <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                          {item.Genres.slice(0, 2).map((g) => (
-                            <span key={g} style={styles.genreTag}>{g}</span>
-                          ))}
-                        </span>
-                      )}
-                      {item.RunTimeTicks > 0 && (
-                        <span style={{
-                          fontSize: 12, color: hovered ? c.black : c.textDim, flexShrink: 0,
-                          minWidth: 48, textAlign: "right" as const, fontWeight: 700,
-                        }}>
-                          {formatRuntime(item.RunTimeTicks)}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
+              );
+            })}
+            {channels.length === 0 && (
+              <div style={{ padding: 24, color: c.textDim, fontSize: 13, textAlign: "center", fontWeight: 700 }}>
+                No channels yet.
               </div>
             )}
-          </>
-        )}
+          </div>
+        </div>
 
-        {!selectedLibrary && libraries.length > 0 && (
-          <p style={{ color: c.textDim }}>Select a library to browse its items.</p>
-        )}
-      </main>
+        {/* Right panel */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          {selectedChannel && !editing && (
+            <ChannelDetail
+              channel={selectedChannel}
+              onEdit={() => setEditing(true)}
+              onDelete={() => deleteChannel(selectedChannel.id)}
+            />
+          )}
+          {selectedChannel && editing && (
+            <ChannelEditor
+              key={selectedChannel.id}
+              channel={selectedChannel}
+              onSave={saveChannel}
+              onCancel={() => setEditing(false)}
+            />
+          )}
+          {!selectedChannel && (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
+              color: c.textDim, fontSize: 16, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.1em",
+            }}>
+              Select a channel or create one
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ── StatusPill ──────────────────────────────────────────────────
+// ── Channel Detail ──────────────────────────────────────────────
 
-function StatusPill({ status }: { status: Status | null }) {
+function ChannelDetail({ channel, onEdit, onDelete }: {
+  channel: Channel;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>{channel.name}</h2>
+          <span style={{ color: c.textDim, fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Channel {channel.number} · {channel.shuffleMode}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onEdit} style={buttonStyle}>Edit</button>
+          {!confirmDelete ? (
+            <button onClick={() => setConfirmDelete(true)} style={{
+              ...buttonStyle, background: c.surface, color: c.danger,
+              boxShadow: `3px 3px 0px 0px ${c.border}`,
+            }}>
+              Delete
+            </button>
+          ) : (
+            <button onClick={() => { onDelete(); setConfirmDelete(false); }} style={{
+              ...buttonStyle, background: c.danger, color: c.black,
+            }}>
+              Confirm
+            </button>
+          )}
+        </div>
+      </div>
+
+      <Section title="Filters">
+        <FilterSummary filters={channel.filters} />
+      </Section>
+    </div>
+  );
+}
+
+// ── Channel Editor ──────────────────────────────────────────────
+
+function ChannelEditor({ channel, onSave, onCancel }: {
+  channel: Channel;
+  onSave: (ch: Channel) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(channel.name);
+  const [number, setNumber] = useState(channel.number);
+  const [shuffleMode, setShuffleMode] = useState(channel.shuffleMode);
+  const [filters, setFilters] = useState<ChannelFilter>(channel.filters);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    onSave({ ...channel, name, number, shuffleMode, filters });
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800 }}>Edit Channel</h2>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={onCancel} style={{
+            ...buttonStyle, background: c.surface, color: c.text,
+          }}>
+            Cancel
+          </button>
+          <button type="submit" style={{ ...buttonStyle, background: c.accent, color: c.black }}>
+            Save
+          </button>
+        </div>
+      </div>
+
+      <Section title="General">
+        <Field label="Name">
+          <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} placeholder="e.g. Cartoon Network" />
+        </Field>
+        <Field label="Channel Number">
+          <input type="number" value={number} onChange={(e) => setNumber(parseInt(e.target.value, 10) || 1)} style={{ ...inputStyle, width: 100 }} min={1} />
+        </Field>
+        <Field label="Shuffle Mode">
+          <div style={{ display: "flex", gap: 8 }}>
+            {(["random", "sequential"] as const).map((mode) => (
+              <button key={mode} type="button" onClick={() => setShuffleMode(mode)} style={{
+                ...buttonStyle,
+                background: shuffleMode === mode ? c.accent : c.surface,
+                color: shuffleMode === mode ? c.black : c.text,
+                padding: "8px 16px",
+              }}>
+                {mode}
+              </button>
+            ))}
+          </div>
+        </Field>
+      </Section>
+
+      <Section title="Content Filters">
+        <p style={{ color: c.textDim, fontSize: 13, marginTop: 0, marginBottom: 16, fontWeight: 700 }}>
+          Define what media this channel pulls from Jellyfin. Leave empty to include everything.
+        </p>
+        <FilterEditor filters={filters} onChange={setFilters} />
+      </Section>
+    </form>
+  );
+}
+
+// ── Filter Editor ───────────────────────────────────────────────
+
+function FilterEditor({ filters, onChange }: {
+  filters: ChannelFilter;
+  onChange: (f: ChannelFilter) => void;
+}) {
+  const [libraries, setLibraries] = useState<JellyfinLibrary[]>([]);
+
+  useEffect(() => {
+    fetch("/api/jellyfin/libraries")
+      .then((r) => r.json())
+      .then((data) => setLibraries(data.libraries || []))
+      .catch(() => {});
+  }, []);
+
+  function updateFilter<K extends keyof ChannelFilter>(key: K, value: ChannelFilter[K]) {
+    onChange({ ...filters, [key]: value });
+  }
+
+  function toggleLibrary(itemId: string) {
+    const current = filters.libraryIds || [];
+    const next = current.includes(itemId)
+      ? current.filter((id) => id !== itemId)
+      : [...current, itemId];
+    updateFilter("libraryIds", next.length > 0 ? next : undefined);
+  }
+
+  function toggleItemType(type: "Movie" | "Episode") {
+    const current = filters.itemTypes || [];
+    const next = current.includes(type)
+      ? current.filter((t) => t !== type)
+      : [...current, type];
+    updateFilter("itemTypes", next.length > 0 ? next : undefined);
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Field label="Libraries">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {libraries.map((lib) => {
+            const selected = (filters.libraryIds || []).includes(lib.ItemId);
+            return (
+              <button key={lib.ItemId} type="button" onClick={() => toggleLibrary(lib.ItemId)} style={{
+                ...buttonStyle, padding: "6px 14px", fontSize: 12,
+                background: selected ? c.accent : c.surface,
+                color: selected ? c.black : c.text,
+              }}>
+                {lib.Name}
+              </button>
+            );
+          })}
+          {libraries.length === 0 && (
+            <span style={{ color: c.textDim, fontSize: 13, fontWeight: 700 }}>
+              No libraries — check Jellyfin connection
+            </span>
+          )}
+        </div>
+        <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700, textTransform: "uppercase" }}>
+          {filters.libraryIds?.length ? `${filters.libraryIds.length} selected` : "All libraries"}
+        </span>
+      </Field>
+
+      <Field label="Item Types">
+        <div style={{ display: "flex", gap: 8 }}>
+          {(["Movie", "Episode"] as const).map((type) => {
+            const selected = (filters.itemTypes || []).includes(type);
+            return (
+              <button key={type} type="button" onClick={() => toggleItemType(type)} style={{
+                ...buttonStyle, padding: "6px 14px", fontSize: 12,
+                background: selected ? c.accent : c.surface,
+                color: selected ? c.black : c.text,
+              }}>
+                {type === "Episode" ? "TV Episodes" : "Movies"}
+              </button>
+            );
+          })}
+        </div>
+        <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700, textTransform: "uppercase" }}>
+          {filters.itemTypes?.length ? filters.itemTypes.join(", ") : "All types"}
+        </span>
+      </Field>
+
+      <Field label="Genres">
+        <TagInput
+          values={filters.genres || []}
+          onChange={(v) => updateFilter("genres", v.length > 0 ? v : undefined)}
+          placeholder="Type a genre and press Enter"
+        />
+      </Field>
+
+      <Field label="Tags">
+        <TagInput
+          values={filters.tags || []}
+          onChange={(v) => updateFilter("tags", v.length > 0 ? v : undefined)}
+          placeholder="Type a tag and press Enter"
+        />
+      </Field>
+
+      <Field label="Title Match">
+        <input
+          value={filters.titleMatch || ""}
+          onChange={(e) => updateFilter("titleMatch", e.target.value || undefined)}
+          style={inputStyle}
+          placeholder="Substring match (e.g. Star Wars)"
+        />
+      </Field>
+    </div>
+  );
+}
+
+// ── Tag Input ───────────────────────────────────────────────────
+
+function TagInput({ values, onChange, placeholder }: {
+  values: string[];
+  onChange: (v: string[]) => void;
+  placeholder: string;
+}) {
+  const [input, setInput] = useState("");
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const trimmed = input.trim();
+      if (trimmed && !values.includes(trimmed)) {
+        onChange([...values, trimmed]);
+      }
+      setInput("");
+    }
+    if (e.key === "Backspace" && input === "" && values.length > 0) {
+      onChange(values.slice(0, -1));
+    }
+  }
+
+  function removeTag(tag: string) {
+    onChange(values.filter((v) => v !== tag));
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: values.length > 0 ? 8 : 0 }}>
+        {values.map((tag) => (
+          <span key={tag} style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            background: c.accent, color: c.black, padding: "2px 10px",
+            border: `2px solid ${c.border}`, fontSize: 12, fontWeight: 800,
+            fontFamily: font, textTransform: "uppercase",
+          }}>
+            {tag}
+            <span onClick={() => removeTag(tag)} style={{ cursor: "pointer", opacity: 0.7, marginLeft: 2, fontSize: 14 }}>×</span>
+          </span>
+        ))}
+      </div>
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        style={inputStyle}
+        placeholder={values.length === 0 ? placeholder : "Add another..."}
+      />
+    </div>
+  );
+}
+
+// ── Shared Components ───────────────────────────────────────────
+
+function StatusPill({ status }: { status: { connected: boolean; serverName?: string } | null }) {
   if (!status) return <span style={{ color: c.textDim, fontSize: 13, fontFamily: font }}>Checking...</span>;
-
   const connected = status.connected;
-  const label = connected ? `Connected to ${status.serverName}` : (status.error || "Disconnected");
-
+  const label = connected ? `Connected to ${status.serverName}` : "Disconnected";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontFamily: font }}>
       <div style={{
         width: 12, height: 12, borderRadius: 0, border: `2px solid ${c.border}`,
-        background: connected ? "#00FF00" : c.accent,
+        background: connected ? c.success : c.danger,
       }} />
-      <span style={{
-        color: connected ? c.text : c.accent, fontWeight: 700,
-      }}>{label}</span>
+      <span style={{ color: connected ? c.text : c.danger, fontWeight: 700 }}>{label}</span>
     </div>
   );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 style={{
+        margin: "0 0 12px", fontSize: 13, textTransform: "uppercase",
+        letterSpacing: "0.15em", color: c.textDim, fontWeight: 800,
+      }}>
+        {title}
+      </h3>
+      <div style={{
+        background: c.surface, border: `4px solid ${c.border}`, borderRadius: 0,
+        padding: 20, boxShadow: `6px 6px 0px 0px ${c.border}`,
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{
+        display: "block", fontSize: 12, color: c.textDim, marginBottom: 6,
+        fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em",
+      }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function FilterSummary({ filters }: { filters: ChannelFilter }) {
+  const parts: string[] = [];
+  if (filters.libraryIds?.length) parts.push(`${filters.libraryIds.length} libraries`);
+  if (filters.itemTypes?.length) parts.push(filters.itemTypes.join(", "));
+  if (filters.genres?.length) parts.push(`Genres: ${filters.genres.join(", ")}`);
+  if (filters.tags?.length) parts.push(`Tags: ${filters.tags.join(", ")}`);
+  if (filters.titleMatch) parts.push(`Title: "${filters.titleMatch}"`);
+
+  if (parts.length === 0) {
+    return <span style={{ color: c.textDim, fontSize: 14, fontWeight: 700 }}>No filters — all media included</span>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {parts.map((p, i) => (
+        <span key={i} style={{ fontSize: 14, fontWeight: 700 }}>{p}</span>
+      ))}
+    </div>
+  );
+}
+
+function summarizeFilters(filters: ChannelFilter): string {
+  const parts: string[] = [];
+  if (filters.genres?.length) parts.push(filters.genres.slice(0, 2).join(", "));
+  if (filters.itemTypes?.length) parts.push(filters.itemTypes.join("/"));
+  if (filters.titleMatch) parts.push(`"${filters.titleMatch}"`);
+  return parts.length > 0 ? parts.join(" · ") : "no filters";
 }
