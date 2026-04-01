@@ -1,0 +1,145 @@
+import type { Channel, ScheduleSlot, JellyfinItem } from "../shared/types.js";
+import { fetchItemsForFilter } from "./jellyfin-client.js";
+import db from "./db.js";
+
+// In-memory schedule cache: channelId -> { slots, generatedAt }
+const scheduleCache = new Map<string, { slots: ScheduleSlot[]; generatedAt: number }>();
+
+const SCHEDULE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = 60 * 60 * 1000; // Regenerate every hour
+const TICKS_PER_MS = 10_000;
+
+export async function getSchedule(channel: Channel): Promise<ScheduleSlot[]> {
+  const cached = scheduleCache.get(channel.id);
+  const now = Date.now();
+
+  if (cached && (now - cached.generatedAt) < CACHE_TTL_MS) {
+    return cached.slots;
+  }
+
+  const slots = await generateSchedule(channel);
+  scheduleCache.set(channel.id, { slots, generatedAt: now });
+  return slots;
+}
+
+export async function generateSchedule(channel: Channel): Promise<ScheduleSlot[]> {
+  const items = await fetchItemsForFilter(channel.filters);
+
+  if (items.length === 0) return [];
+
+  const slots: ScheduleSlot[] = [];
+
+  // Schedule starts at the most recent midnight UTC
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setUTCHours(0, 0, 0, 0);
+  let currentTime = midnight.getTime();
+  const endTime = currentTime + SCHEDULE_DURATION_MS;
+
+  // Build a playlist based on shuffle mode
+  let playlist: JellyfinItem[];
+  if (channel.shuffleMode === "random") {
+    playlist = shuffleDeterministic(items, channel.id + dateKey(midnight));
+  } else {
+    playlist = [...items];
+  }
+
+  let idx = 0;
+
+  while (currentTime < endTime) {
+    const item = playlist[idx % playlist.length];
+    const durationMs = item.RunTimeTicks / TICKS_PER_MS;
+
+    // Skip items with no meaningful duration (< 30s)
+    if (durationMs < 30_000) {
+      idx++;
+      if (idx > playlist.length * 2) break;
+      continue;
+    }
+
+    const slotStart = new Date(currentTime);
+    const slotEnd = new Date(currentTime + durationMs);
+
+    slots.push({
+      channelId: channel.id,
+      itemId: item.Id,
+      title: formatTitle(item),
+      startTime: slotStart.toISOString(),
+      endTime: slotEnd.toISOString(),
+      durationTicks: item.RunTimeTicks,
+      filePath: item.Path || "",
+    });
+
+    currentTime += durationMs;
+    idx++;
+  }
+
+  return slots;
+}
+
+export function invalidateSchedule(channelId: string) {
+  scheduleCache.delete(channelId);
+}
+
+export function invalidateAllSchedules() {
+  scheduleCache.clear();
+}
+
+export function getAllChannels(): Channel[] {
+  const rows = db.prepare("SELECT * FROM channels ORDER BY number ASC").all();
+  return rows.map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    number: row.number,
+    filters: JSON.parse(row.filters),
+    shuffleMode: row.shuffle_mode,
+    logoUrl: row.logo_url,
+  }));
+}
+
+// Get the schedule slot that should be playing right now
+export async function getCurrentSlot(channel: Channel): Promise<{ slot: ScheduleSlot; offsetSeconds: number } | null> {
+  const schedule = await getSchedule(channel);
+  const now = new Date().toISOString();
+
+  for (const slot of schedule) {
+    if (slot.startTime <= now && slot.endTime > now) {
+      const offsetMs = Date.now() - new Date(slot.startTime).getTime();
+      return { slot, offsetSeconds: Math.floor(offsetMs / 1000) };
+    }
+  }
+
+  return null;
+}
+
+// Deterministic shuffle based on a seed string
+function shuffleDeterministic(items: JellyfinItem[], seed: string): JellyfinItem[] {
+  const arr = [...items];
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+
+  for (let i = arr.length - 1; i > 0; i--) {
+    hash = ((hash << 5) - hash + i) | 0;
+    const j = Math.abs(hash) % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function dateKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+}
+
+function formatTitle(item: JellyfinItem): string {
+  if (item.Type === "Episode" && item.SeriesName) {
+    const s = item.ParentIndexNumber;
+    const e = item.IndexNumber;
+    const tag = s != null && e != null
+      ? `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`
+      : "";
+    return [item.SeriesName, tag, item.Name].filter(Boolean).join(" - ");
+  }
+  return item.Name;
+}
