@@ -40,3 +40,16 @@ export interface JellyfinItem {
   Overview?: string;
   ImageTags?: Record<string, string>;
 }
+
+export interface JellyfinLibrary {
+  Name: string;
+  CollectionType: string;
+  ItemId: string;
+  Locations: string[];
+}
+
+export interface JellyfinServerInfo {
+  ServerName: string;
+  Version: string;
+  Id: string;
+}
