@@ -95,7 +95,7 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
   });
 });
 
-// Stream endpoint — placeholder until lesson 6 (ffmpeg)
+// Stream endpoint — proxy the Jellyfin stream directly instead of redirecting
 iptvRouter.get("/stream/:channelId", async (req, res) => {
   const channels = getAllChannels();
   const channel = channels.find((c) => c.id === req.params.channelId);
@@ -110,8 +110,6 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  // For now, redirect to the Jellyfin direct stream as a stopgap
-  // Lesson 6 will replace this with ffmpeg HLS
   const jellyfinUrl = process.env.JELLYFIN_URL;
   const apiKey = process.env.JELLYFIN_API_KEY;
   if (!jellyfinUrl || !apiKey) {
@@ -119,8 +117,51 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?static=true&api_key=${apiKey}`;
-  res.redirect(streamUrl);
+  // Proxy the stream from Jellyfin instead of redirecting
+  try {
+    const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?static=true&api_key=${apiKey}`;
+    const upstream = await fetch(streamUrl);
+
+    if (!upstream.ok) {
+      res.status(upstream.status).json({ error: "Upstream stream failed" });
+      return;
+    }
+
+    // Forward content type and pipe the body
+    const contentType = upstream.headers.get("content-type") || "video/mp2t";
+    res.setHeader("Content-Type", contentType);
+
+    // Don't forward content-length — we may not serve the full file
+    // Mark as infinite/live stream
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const reader = upstream.body?.getReader();
+    if (!reader) {
+      res.status(503).json({ error: "No stream body" });
+      return;
+    }
+
+    req.on("close", () => {
+      reader.cancel();
+    });
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.writableEnded) {
+        res.write(Buffer.from(value));
+      } else {
+        reader.cancel();
+        break;
+      }
+    }
+
+    if (!res.writableEnded) res.end();
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(503).json({ error: "Stream failed" });
+    }
+  }
 });
 
 // Format date as XMLTV format: "20260401120000 +0000"
