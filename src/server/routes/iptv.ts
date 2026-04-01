@@ -7,7 +7,7 @@ export const iptvRouter = Router();
 iptvRouter.get("/channels.m3u", async (req, res) => {
   const channels = getAllChannels();
 
-  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
 
   let m3u = "#EXTM3U\n\n";
 
