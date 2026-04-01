@@ -1,14 +1,30 @@
 import { useState, useEffect } from "react";
 import type { JellyfinLibrary, JellyfinItem } from "../shared/types";
 
-const theme = {
-  bg: "#0f0f0f",
-  surface: "#1a1a1a",
-  accent: "#7C3AED",
-  text: "#e4e4e4",
-  textDim: "#888",
-  border: "#2a2a2a",
-};
+const themes = {
+  "Midnight Purple": {
+    bg: "#0f0f0f", surface: "#1a1a1a", accent: "#7C3AED",
+    text: "#e4e4e4", textDim: "#888", border: "#2a2a2a",
+  },
+  "Ember": {
+    bg: "#0d0907", surface: "#1c1410", accent: "#e8622b",
+    text: "#f0e6e0", textDim: "#8a7568", border: "#2e2218",
+  },
+  "Ocean": {
+    bg: "#060d14", surface: "#0d1a26", accent: "#06b6d4",
+    text: "#d4ecf7", textDim: "#5e8a9e", border: "#152736",
+  },
+  "Neon Mint": {
+    bg: "#080f0b", surface: "#0f1d14", accent: "#34d399",
+    text: "#d8f0e5", textDim: "#5e9478", border: "#16301f",
+  },
+  "Rose Gold": {
+    bg: "#100a0c", surface: "#1e1318", accent: "#f472b6",
+    text: "#f2e4ea", textDim: "#9a7585", border: "#2d1c24",
+  },
+} as const;
+
+type ThemeName = keyof typeof themes;
 
 function formatRuntime(ticks: number): string {
   const totalSeconds = Math.floor(ticks / 10_000_000);
@@ -37,6 +53,8 @@ interface Status {
 }
 
 export default function App() {
+  const [themeName, setThemeName] = useState<ThemeName>("Midnight Purple");
+  const theme = themes[themeName];
   const [status, setStatus] = useState<Status | null>(null);
   const [libraries, setLibraries] = useState<JellyfinLibrary[]>([]);
   const [selectedLibrary, setSelectedLibrary] = useState<string | null>(null);
@@ -73,19 +91,43 @@ export default function App() {
   }
 
   return (
-    <div style={{ background: theme.bg, color: theme.text, minHeight: "100vh", fontFamily: "system-ui" }}>
+    <div style={{ background: theme.bg, color: theme.text, minHeight: "100vh", fontFamily: "system-ui", transition: "background 0.3s, color 0.3s" }}>
       {/* Header */}
       <header style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
         padding: "16px 24px", borderBottom: `1px solid ${theme.border}`,
       }}>
         <h1 style={{ margin: 0, fontSize: 24, color: theme.accent }}>Virtual TV</h1>
-        <StatusPill status={status} />
+        <StatusPill status={status} theme={theme} />
       </header>
 
       <main style={{ maxWidth: 1200, margin: "0 auto", padding: 24 }}>
+        {/* Theme Picker */}
+        <div style={{ marginBottom: 32 }}>
+          <h2 style={{ fontSize: 14, color: theme.textDim, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 }}>Theme</h2>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(Object.keys(themes) as ThemeName[]).map((name) => (
+              <button
+                key={name}
+                onClick={() => setThemeName(name)}
+                style={{
+                  background: themeName === name ? themes[name].accent + "22" : "transparent",
+                  border: `2px solid ${themeName === name ? themes[name].accent : theme.border}`,
+                  borderRadius: 8, padding: "8px 16px", cursor: "pointer",
+                  color: themeName === name ? themes[name].accent : theme.textDim,
+                  fontSize: 13, fontWeight: themeName === name ? 600 : 400,
+                  display: "flex", alignItems: "center", gap: 8,
+                }}
+              >
+                <div style={{ width: 12, height: 12, borderRadius: "50%", background: themes[name].accent }} />
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Libraries */}
-        <h2 style={{ fontSize: 16, color: theme.textDim, marginBottom: 12 }}>Libraries</h2>
+        <h2 style={{ fontSize: 14, color: theme.textDim, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 }}>Libraries</h2>
         {libraries.length === 0 && status?.connected && (
           <p style={{ color: theme.textDim }}>No libraries found.</p>
         )}
@@ -113,7 +155,7 @@ export default function App() {
         {/* Items */}
         {selectedLibrary && (
           <>
-            <h2 style={{ fontSize: 16, color: theme.textDim, marginBottom: 12 }}>
+            <h2 style={{ fontSize: 14, color: theme.textDim, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 }}>
               Items {totalCount > 0 && <span style={{ color: theme.accent }}>({totalCount})</span>}
             </h2>
             {loading ? (
@@ -168,7 +210,7 @@ export default function App() {
   );
 }
 
-function StatusPill({ status }: { status: Status | null }) {
+function StatusPill({ status, theme }: { status: Status | null; theme: typeof themes[ThemeName] }) {
   if (!status) return <span style={{ color: theme.textDim, fontSize: 13 }}>Checking...</span>;
 
   const color = status.connected ? "#22c55e" : "#ef4444";
