@@ -22,6 +22,7 @@ interface DesignSystem {
   sectionLabel: React.CSSProperties;
   pageStyle: React.CSSProperties;
   statusDot: (connected: boolean) => React.CSSProperties;
+  overlay?: () => React.ReactNode;
 }
 
 const systems: Record<string, DesignSystem> = {
@@ -136,101 +137,154 @@ const systems: Record<string, DesignSystem> = {
     }),
   },
 
-  "Dark Minimal": {
-    name: "Dark Minimal",
-    fonts: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap",
-    fontFamily: "Inter, system-ui, sans-serif",
-    headingFamily: "Inter, system-ui, sans-serif",
+  "Botanical": {
+    name: "Botanical",
+    fonts: "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&family=Source+Sans+3:wght@400;500;600&display=swap",
+    fontFamily: "Source Sans 3, system-ui, sans-serif",
+    headingFamily: "Playfair Display, Georgia, serif",
     colors: {
-      bg: "#0f0f0f", surface: "#1a1a1a", accent: "#7C3AED", secondary: "#7C3AED",
-      text: "#e4e4e4", textDim: "#888", border: "#2a2a2a", heading: "#e4e4e4",
+      bg: "#F9F8F4", surface: "#FFFFFF", accent: "#8C9A84", secondary: "#DCCFC2",
+      text: "#2D3A31", textDim: "#7A8578", border: "#E6E2DA", heading: "#2D3A31",
     },
     pageStyle: {},
+    overlay: () => (
+      <div
+        style={{
+          position: "fixed", inset: 0, zIndex: 50, opacity: 0.015,
+          pointerEvents: "none",
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+          backgroundRepeat: "repeat",
+        }}
+      />
+    ),
     card: {
-      background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 8, padding: 16,
-      transition: "border-color 0.2s",
+      background: "#FFFFFF", border: "1px solid #E6E2DA", borderRadius: 24, padding: 20,
+      boxShadow: "0 4px 6px -1px rgba(45, 58, 49, 0.05)",
+      transition: "transform 0.5s ease-out, box-shadow 0.5s ease-out",
     },
-    cardHover: { borderColor: "#3a3a3a" },
+    cardHover: {
+      transform: "translateY(-2px)",
+      boxShadow: "0 10px 15px -3px rgba(45, 58, 49, 0.05)",
+    },
     badge: {
-      fontSize: 11, padding: "2px 6px", borderRadius: 4, fontWeight: 600,
-      background: "#7C3AED22", color: "#7C3AED",
+      fontSize: 11, padding: "3px 10px", borderRadius: 20, fontWeight: 600,
+      background: "#8C9A8418", color: "#8C9A84",
+      border: "1px solid #8C9A8430",
+      letterSpacing: "0.03em",
     },
     genreTag: {
-      fontSize: 11, padding: "1px 6px", borderRadius: 4,
-      border: "1px solid #2a2a2a", color: "#888",
+      fontSize: 11, padding: "2px 10px", borderRadius: 20,
+      border: "1px solid #E6E2DA", color: "#7A8578",
     },
     button: {
-      background: "transparent", border: "1px solid #2a2a2a", borderRadius: 8,
-      padding: "12px 20px", cursor: "pointer", color: "#e4e4e4", textAlign: "left" as const,
-      transition: "border-color 0.2s",
-    },
-    buttonActive: { background: "#1a1a1a", borderColor: "#7C3AED" },
-    header: {
-      display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "16px 24px", borderBottom: "1px solid #2a2a2a",
-    },
-    sectionLabel: {
-      fontSize: 14, color: "#888", marginBottom: 10, textTransform: "uppercase" as const,
-      letterSpacing: "0.05em", fontWeight: 500,
-    },
-    statusDot: (c) => ({
-      width: 8, height: 8, borderRadius: "50%",
-      background: c ? "#22c55e" : "#ef4444",
-    }),
-  },
-
-  "Glassmorphism": {
-    name: "Glassmorphism",
-    fonts: "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap",
-    fontFamily: "Plus Jakarta Sans, sans-serif",
-    headingFamily: "Plus Jakarta Sans, sans-serif",
-    colors: {
-      bg: "#0a0a1a", surface: "rgba(255,255,255,0.06)", accent: "#60a5fa",
-      secondary: "#818cf8", text: "#f0f0ff", textDim: "rgba(255,255,255,0.45)",
-      border: "rgba(255,255,255,0.1)", heading: "#f0f0ff",
-    },
-    pageStyle: {
-      backgroundImage: "radial-gradient(ellipse at 20% 50%, #1e1b4b33 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, #1e3a5f33 0%, transparent 50%)",
-    },
-    card: {
-      background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: 16, padding: 16, backdropFilter: "blur(12px)",
-      WebkitBackdropFilter: "blur(12px)",
-      transition: "background 0.3s, border-color 0.3s",
-    },
-    cardHover: { background: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" },
-    badge: {
-      fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 600,
-      background: "rgba(96,165,250,0.15)", color: "#60a5fa",
-      border: "1px solid rgba(96,165,250,0.2)",
-    },
-    genreTag: {
-      fontSize: 11, padding: "1px 8px", borderRadius: 20,
-      border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.45)",
-    },
-    button: {
-      background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-      borderRadius: 12, padding: "12px 20px", cursor: "pointer",
-      color: "#f0f0ff", textAlign: "left" as const, backdropFilter: "blur(8px)",
-      WebkitBackdropFilter: "blur(8px)", transition: "all 0.3s",
+      background: "transparent", border: "1px solid #E6E2DA", borderRadius: 9999,
+      padding: "12px 24px", cursor: "pointer", color: "#2D3A31",
+      textAlign: "left" as const, fontWeight: 500,
+      transition: "all 0.3s ease-out",
+      letterSpacing: "0.02em",
     },
     buttonActive: {
-      background: "rgba(96,165,250,0.1)", borderColor: "rgba(96,165,250,0.3)",
-      boxShadow: "0 0 20px rgba(96,165,250,0.1)",
+      background: "#2D3A31", color: "#F9F8F4", borderColor: "#2D3A31",
     },
     header: {
       display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,0.06)",
-      backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+      padding: "20px 32px", borderBottom: "1px solid #E6E2DA", background: "#F9F8F4",
     },
     sectionLabel: {
-      fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 12,
+      fontSize: 12, color: "#7A8578", marginBottom: 16,
       textTransform: "uppercase" as const, letterSpacing: "0.15em", fontWeight: 500,
     },
     statusDot: (c) => ({
       width: 8, height: 8, borderRadius: "50%",
-      background: c ? "#34d399" : "#f87171",
-      boxShadow: c ? "0 0 8px #34d39966" : "0 0 8px #f8717166",
+      background: c ? "#8C9A84" : "#C27B66",
+      boxShadow: c ? "0 0 6px #8C9A8444" : "0 0 6px #C27B6644",
+    }),
+  },
+
+  "Vaporwave": {
+    name: "Vaporwave",
+    fonts: "https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap",
+    fontFamily: "Share Tech Mono, monospace",
+    headingFamily: "Orbitron, sans-serif",
+    colors: {
+      bg: "#090014", surface: "rgba(26, 16, 60, 0.8)", accent: "#FF00FF",
+      secondary: "#FF9900", text: "#E0E0E0", textDim: "rgba(224,224,224,0.45)",
+      border: "#2D1B4E", heading: "#E0E0E0",
+    },
+    pageStyle: {
+      backgroundImage: "radial-gradient(ellipse at 50% 0%, rgba(255,0,255,0.08) 0%, transparent 60%)",
+    },
+    overlay: () => (
+      <>
+        {/* Scanlines */}
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 50, pointerEvents: "none",
+          background: "linear-gradient(rgba(18,16,20,0) 50%, rgba(0,0,0,0.25) 50%)",
+          backgroundSize: "100% 4px",
+        }} />
+        {/* Chromatic aberration */}
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 49, pointerEvents: "none",
+          background: "linear-gradient(90deg, rgba(255,0,0,0.03), rgba(0,255,0,0.01), rgba(0,0,255,0.03))",
+        }} />
+        {/* Floating sun */}
+        <div style={{
+          position: "fixed", top: "-200px", left: "50%", transform: "translateX(-50%)",
+          width: 600, height: 600, borderRadius: "50%", pointerEvents: "none",
+          background: "linear-gradient(to bottom, #FF9900, #FF00FF)",
+          filter: "blur(100px)", opacity: 0.15, zIndex: 0,
+        }} />
+      </>
+    ),
+    card: {
+      background: "rgba(26, 16, 60, 0.8)", border: "1px solid rgba(255,0,255,0.3)",
+      borderTop: "2px solid #00FFFF", borderRadius: 0, padding: 16,
+      backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+      transition: "transform 0.2s linear, box-shadow 0.2s linear",
+    },
+    cardHover: {
+      transform: "translateY(-2px)",
+      boxShadow: "0 0 20px rgba(0,255,255,0.15)",
+    },
+    badge: {
+      fontSize: 11, padding: "2px 8px", borderRadius: 0, fontWeight: 700,
+      background: "rgba(255,0,255,0.15)", color: "#FF00FF",
+      border: "1px solid rgba(255,0,255,0.4)",
+      textTransform: "uppercase" as const, letterSpacing: "0.08em",
+      fontFamily: "Share Tech Mono, monospace",
+    },
+    genreTag: {
+      fontSize: 10, padding: "1px 8px", borderRadius: 0,
+      border: "1px solid #2D1B4E", color: "rgba(224,224,224,0.45)",
+      fontFamily: "Share Tech Mono, monospace",
+    },
+    button: {
+      background: "transparent", border: "2px solid #00FFFF", borderRadius: 0,
+      padding: "10px 20px", cursor: "pointer", color: "#00FFFF",
+      textAlign: "left" as const, fontFamily: "Share Tech Mono, monospace",
+      textTransform: "uppercase" as const, letterSpacing: "0.1em", fontSize: 13,
+      transition: "all 0.2s linear",
+      transform: "skewX(-12deg)",
+    },
+    buttonActive: {
+      background: "#00FFFF", color: "#090014", borderColor: "#00FFFF",
+      boxShadow: "0 0 20px rgba(0,255,255,0.3)",
+      transform: "skewX(0deg)",
+    },
+    header: {
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "16px 24px", borderBottom: "2px solid #2D1B4E",
+      background: "rgba(9,0,20,0.9)", backdropFilter: "blur(8px)",
+    },
+    sectionLabel: {
+      fontSize: 12, color: "rgba(224,224,224,0.35)", marginBottom: 12,
+      textTransform: "uppercase" as const, letterSpacing: "0.2em", fontWeight: 500,
+      fontFamily: "Share Tech Mono, monospace",
+    },
+    statusDot: (c) => ({
+      width: 8, height: 8, borderRadius: 0,
+      background: c ? "#00FFFF" : "#FF00FF",
+      boxShadow: c ? "0 0 8px #00FFFF88" : "0 0 8px #FF00FF88",
     }),
   },
 
@@ -319,7 +373,7 @@ interface Status {
 // ── App ─────────────────────────────────────────────────────────
 
 export default function App() {
-  const [dsName, setDsName] = useState<string>("Dark Minimal");
+  const [dsName, setDsName] = useState<string>("Botanical");
   const ds = systems[dsName];
   const [status, setStatus] = useState<Status | null>(null);
   const [libraries, setLibraries] = useState<JellyfinLibrary[]>([]);
@@ -372,34 +426,52 @@ export default function App() {
   const is90s = dsName === "90s Retro";
   const isBrutal = dsName === "Neo-Brutalism";
   const isTerminal = dsName === "Terminal";
+  const isBotanical = dsName === "Botanical";
+  const isVaporwave = dsName === "Vaporwave";
 
   return (
     <div style={{
       background: ds.colors.bg, color: ds.colors.text, minHeight: "100vh",
       fontFamily: ds.fontFamily, transition: "background 0.3s, color 0.3s",
+      position: "relative",
       ...ds.pageStyle,
     }}>
+      {/* Design system overlays (paper grain, scanlines, etc.) */}
+      {ds.overlay?.()}
+
       {/* Header */}
-      <header style={ds.header}>
+      <header style={{ ...ds.header, position: "relative", zIndex: 10 }}>
         <h1 style={{
-          margin: 0, fontSize: is90s ? 16 : 24, fontWeight: 800,
-          color: is90s ? "#FFFFFF" : isBrutal ? ds.colors.text : ds.colors.accent,
+          margin: 0,
+          fontSize: is90s ? 16 : isBotanical ? 28 : 24,
+          fontWeight: isBotanical ? 700 : 800,
+          color: is90s ? "#FFFFFF" : isBrutal ? ds.colors.text : isVaporwave ? "#E0E0E0" : ds.colors.accent,
           fontFamily: ds.headingFamily,
           ...(isTerminal ? { letterSpacing: "0.1em" } : {}),
           ...(isBrutal ? { background: "#FF6B6B", padding: "4px 12px", border: "4px solid #000" } : {}),
+          ...(isBotanical ? { fontStyle: "italic", letterSpacing: "-0.01em" } : {}),
+          ...(isVaporwave ? {
+            letterSpacing: "0.15em", textTransform: "uppercase" as const,
+            fontSize: 20, fontWeight: 900,
+            textShadow: "0 0 10px rgba(255,0,255,0.4)",
+          } : {}),
         }}>
-          {isTerminal ? "> virtual-tv" : "Virtual TV"}
+          {isTerminal ? "> virtual-tv" : isVaporwave ? "Virtual TV" : isBotanical ? "Virtual TV" : "Virtual TV"}
         </h1>
-        <StatusPill status={status} ds={ds} isTerminal={isTerminal} />
+        <StatusPill status={status} ds={ds} isTerminal={isTerminal} isVaporwave={isVaporwave} />
       </header>
 
-      <main style={{ maxWidth: is90s ? 1024 : 1200, margin: "0 auto", padding: is90s ? 16 : 24 }}>
+      <main style={{
+        maxWidth: is90s ? 1024 : 1200, margin: "0 auto",
+        padding: is90s ? 16 : isBotanical ? "32px 32px" : 24,
+        position: "relative", zIndex: 10,
+      }}>
         {/* Design System Picker */}
-        <div style={{ marginBottom: is90s ? 16 : 32 }}>
+        <div style={{ marginBottom: is90s ? 16 : isBotanical ? 40 : 32 }}>
           <div style={ds.sectionLabel}>
-            {isTerminal ? "$ select-theme" : "Design System"}
+            {isTerminal ? "$ select-theme" : isVaporwave ? "> SELECT THEME" : "Design System"}
           </div>
-          <div style={{ display: "flex", gap: is90s ? 4 : 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: is90s ? 4 : isBotanical ? 12 : 8, flexWrap: "wrap" }}>
             {Object.keys(systems).map((name) => {
               const s = systems[name];
               const active = dsName === name;
@@ -412,15 +484,34 @@ export default function App() {
                     ...(active ? ds.buttonActive : {}),
                     display: "flex", alignItems: "center", gap: 8,
                     fontSize: is90s ? 11 : 13,
+                    ...(isVaporwave ? {
+                      // Counter-skew the text content
+                    } : {}),
                   }}
                 >
-                  <div style={{
-                    width: 12, height: 12,
-                    borderRadius: name === "Glassmorphism" ? "50%" : (name === "90s Retro" || name === "Neo-Brutalism" || name === "Terminal" ? 0 : 4),
-                    background: s.colors.accent,
-                    border: isBrutal || is90s ? "2px solid #000" : "none",
-                  }} />
-                  {name}
+                  {isVaporwave ? (
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 8,
+                      transform: active ? "none" : "skewX(12deg)",
+                    }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: 0,
+                        background: s.colors.accent,
+                        boxShadow: `0 0 6px ${s.colors.accent}66`,
+                      }} />
+                      {name}
+                    </span>
+                  ) : (
+                    <>
+                      <div style={{
+                        width: 12, height: 12,
+                        borderRadius: name === "90s Retro" || name === "Neo-Brutalism" || name === "Terminal" || name === "Vaporwave" ? 0 : "50%",
+                        background: s.colors.accent,
+                        border: isBrutal || is90s ? "2px solid #000" : "none",
+                      }} />
+                      {name}
+                    </>
+                  )}
                 </button>
               );
             })}
@@ -429,17 +520,21 @@ export default function App() {
 
         {/* Libraries */}
         <div style={ds.sectionLabel}>
-          {isTerminal ? "$ ls /libraries" : "Libraries"}
+          {isTerminal ? "$ ls /libraries" : isVaporwave ? "> LIBRARIES" : "Libraries"}
         </div>
         {libraries.length === 0 && status?.connected && (
           <p style={{ color: ds.colors.textDim }}>No libraries found.</p>
         )}
         {!status?.connected && status !== null && (
-          <p style={{ color: "#ef4444" }}>
-            {isTerminal ? "ERROR: connection refused" : "Not connected to Jellyfin."}
+          <p style={{ color: isVaporwave ? "#FF00FF" : "#ef4444" }}>
+            {isTerminal ? "ERROR: connection refused"
+              : isVaporwave ? "> CONNECTION REFUSED" : "Not connected to Jellyfin."}
           </p>
         )}
-        <div style={{ display: "flex", gap: is90s ? 4 : 12, marginBottom: is90s ? 16 : 32, flexWrap: "wrap" }}>
+        <div style={{
+          display: "flex", gap: is90s ? 4 : isBotanical ? 16 : 12,
+          marginBottom: is90s ? 16 : isBotanical ? 40 : 32, flexWrap: "wrap",
+        }}>
           {libraries.map((lib) => {
             const active = selectedLibrary === lib.ItemId;
             return (
@@ -449,17 +544,35 @@ export default function App() {
                 style={{
                   ...ds.button,
                   ...(active ? ds.buttonActive : {}),
+                  ...(isVaporwave && !active ? {} : {}),
                 }}
               >
-                <div style={{ fontWeight: is90s ? 700 : 600 }}>{lib.Name}</div>
-                <div style={{
-                  fontSize: is90s ? 10 : 12,
-                  color: active && isBrutal ? "#000" : ds.colors.textDim,
-                  marginTop: 2,
-                  ...(is90s ? { fontFamily: "Courier New, monospace" } : {}),
-                }}>
-                  {isTerminal ? `type=${lib.CollectionType}` : lib.CollectionType}
-                </div>
+                {isVaporwave ? (
+                  <span style={{
+                    display: "inline-block",
+                    transform: active ? "none" : "skewX(12deg)",
+                  }}>
+                    <div style={{ fontWeight: 700 }}>{lib.Name}</div>
+                    <div style={{
+                      fontSize: 11, color: active ? "#090014" : ds.colors.textDim, marginTop: 2,
+                    }}>
+                      {`type=${lib.CollectionType}`}
+                    </div>
+                  </span>
+                ) : (
+                  <>
+                    <div style={{ fontWeight: is90s ? 700 : isBotanical ? 500 : 600 }}>{lib.Name}</div>
+                    <div style={{
+                      fontSize: is90s ? 10 : 12,
+                      color: active && isBrutal ? "#000" : ds.colors.textDim,
+                      marginTop: 2,
+                      ...(is90s ? { fontFamily: "Courier New, monospace" } : {}),
+                      ...(isBotanical ? { fontStyle: "italic" } : {}),
+                    }}>
+                      {isTerminal ? `type=${lib.CollectionType}` : lib.CollectionType}
+                    </div>
+                  </>
+                )}
               </button>
             );
           })}
@@ -471,21 +584,21 @@ export default function App() {
             <div style={ds.sectionLabel}>
               {isTerminal
                 ? `$ find . -type f | wc -l  # ${totalCount}`
-                : <>Items {totalCount > 0 && <span style={{ color: ds.colors.accent }}>({totalCount})</span>}</>
+                : isVaporwave
+                  ? `> ITEMS [${totalCount}]`
+                  : <>Items {totalCount > 0 && <span style={{ color: ds.colors.accent }}>({totalCount})</span>}</>
               }
             </div>
             {loading ? (
               <p style={{ color: ds.colors.textDim }}>
-                {isTerminal ? "Loading..." : "Loading..."}
+                {isVaporwave ? "> LOADING..." : "Loading..."}
               </p>
             ) : (
               <div style={{
                 display: "grid",
                 gridTemplateColumns: `repeat(auto-fill, minmax(${is90s ? "240px" : "260px"}, 1fr))`,
-                gap: is90s ? 0 : 12,
-                ...(is90s ? {
-                  border: "2px solid #808080",
-                } : {}),
+                gap: is90s ? 0 : isBotanical ? 16 : 12,
+                ...(is90s ? { border: "2px solid #808080" } : {}),
               }}>
                 {items.map((item, i) => (
                   <div
@@ -499,8 +612,7 @@ export default function App() {
                         borderBottom: "1px solid #808080",
                         borderRight: "1px solid #808080",
                         background: i % 2 === 0 ? "#FFFFFF" : "#E8E8E8",
-                        padding: 12,
-                        boxShadow: "none",
+                        padding: 12, boxShadow: "none",
                       } : {}),
                       ...(isBrutal && hoveredCard === item.Id ? {
                         transform: "translate(-2px, -2px)",
@@ -509,10 +621,16 @@ export default function App() {
                     }}
                   >
                     <div style={{
-                      fontWeight: is90s || isBrutal ? 700 : 600, marginBottom: 4,
-                      fontFamily: ds.fontFamily,
+                      fontWeight: is90s || isBrutal ? 700 : isBotanical ? 500 : 600,
+                      marginBottom: 4,
+                      fontFamily: isBotanical ? ds.headingFamily : ds.fontFamily,
                       ...(is90s ? { fontSize: 13, color: "#000000" } : {}),
                       ...(isTerminal ? { fontSize: 13 } : {}),
+                      ...(isBotanical ? { fontSize: 16, color: ds.colors.heading } : {}),
+                      ...(isVaporwave ? {
+                        fontSize: 14, color: "#00FFFF",
+                        textShadow: "0 0 5px rgba(0,255,255,0.5)",
+                      } : {}),
                     }}>
                       {formatEpisode(item)}
                     </div>
@@ -542,8 +660,14 @@ export default function App() {
         )}
 
         {!selectedLibrary && libraries.length > 0 && (
-          <p style={{ color: ds.colors.textDim }}>
-            {isTerminal ? "# select a library to list items" : "Select a library to browse its items."}
+          <p style={{
+            color: ds.colors.textDim,
+            ...(isBotanical ? { fontStyle: "italic", fontSize: 16 } : {}),
+            ...(isVaporwave ? { fontFamily: "Share Tech Mono, monospace" } : {}),
+          }}>
+            {isTerminal ? "# select a library to list items"
+              : isVaporwave ? "> select a library to browse"
+              : "Select a library to browse its items."}
           </p>
         )}
       </main>
@@ -553,21 +677,28 @@ export default function App() {
 
 // ── StatusPill ──────────────────────────────────────────────────
 
-function StatusPill({ status, ds, isTerminal }: {
-  status: Status | null; ds: DesignSystem; isTerminal: boolean;
+function StatusPill({ status, ds, isTerminal, isVaporwave }: {
+  status: Status | null; ds: DesignSystem; isTerminal: boolean; isVaporwave: boolean;
 }) {
   if (!status) return <span style={{ color: ds.colors.textDim, fontSize: 13 }}>
-    {isTerminal ? "connecting..." : "Checking..."}
+    {isTerminal ? "connecting..." : isVaporwave ? "> CONNECTING..." : "Checking..."}
   </span>;
 
   const label = status.connected
-    ? (isTerminal ? `ssh ${status.serverName}@jellyfin` : `Connected to ${status.serverName}`)
+    ? (isTerminal ? `ssh ${status.serverName}@jellyfin`
+      : isVaporwave ? `LINKED // ${status.serverName}`
+      : `Connected to ${status.serverName}`)
     : status.error || "Disconnected";
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, fontSize: 13,
+      ...(isVaporwave ? { fontFamily: "Share Tech Mono, monospace", letterSpacing: "0.05em" } : {}),
+    }}>
       <div style={ds.statusDot(status.connected)} />
-      <span style={{ color: status.connected ? ds.colors.text : "#ef4444" }}>{label}</span>
+      <span style={{
+        color: status.connected ? ds.colors.text : (isVaporwave ? "#FF00FF" : "#ef4444"),
+      }}>{label}</span>
     </div>
   );
 }
