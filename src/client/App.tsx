@@ -14,6 +14,8 @@ interface DesignSystem {
   };
   card: React.CSSProperties;
   cardHover: React.CSSProperties;
+  listRow: React.CSSProperties;
+  listRowHover: React.CSSProperties;
   badge: React.CSSProperties;
   genreTag: React.CSSProperties;
   button: React.CSSProperties;
@@ -45,6 +47,12 @@ const systems: Record<string, DesignSystem> = {
       transition: "transform 0.1s ease-out, box-shadow 0.1s ease-out",
     },
     cardHover: { transform: "translate(-2px, -2px)", boxShadow: "10px 10px 0px 0px #000000" },
+    listRow: {
+      display: "flex", alignItems: "center", gap: 16, padding: "12px 16px",
+      background: "#FFFFFF", borderBottom: "4px solid #000000",
+      transition: "transform 0.1s ease-out, box-shadow 0.1s ease-out",
+    },
+    listRowHover: { background: "#FFD93D" },
     badge: {
       fontSize: 11, padding: "2px 8px", borderRadius: 0, fontWeight: 800,
       background: "#FF6B6B", color: "#000000", border: "2px solid #000000",
@@ -98,6 +106,11 @@ const systems: Record<string, DesignSystem> = {
       boxShadow: "inset -1px -1px 0 #404040, inset 1px 1px 0 #dfdfdf",
     },
     cardHover: {},
+    listRow: {
+      display: "flex", alignItems: "center", gap: 12, padding: "4px 8px",
+      background: "#FFFFFF", borderBottom: "1px solid #808080", fontSize: 12,
+    },
+    listRowHover: { background: "#000080", color: "#FFFFFF" },
     badge: {
       fontSize: 11, padding: "1px 6px", borderRadius: 0, fontWeight: 700,
       background: "#000080", color: "#FFFFFF", border: "1px solid #000000",
@@ -166,6 +179,12 @@ const systems: Record<string, DesignSystem> = {
       transform: "translateY(-2px)",
       boxShadow: "0 10px 15px -3px rgba(45, 58, 49, 0.05)",
     },
+    listRow: {
+      display: "flex", alignItems: "center", gap: 20, padding: "16px 24px",
+      borderBottom: "1px solid #E6E2DA",
+      transition: "background 0.3s ease-out",
+    },
+    listRowHover: { background: "#F2F0EB" },
     badge: {
       fontSize: 11, padding: "3px 10px", borderRadius: 20, fontWeight: 600,
       background: "#8C9A8418", color: "#8C9A84",
@@ -246,6 +265,16 @@ const systems: Record<string, DesignSystem> = {
       transform: "translateY(-2px)",
       boxShadow: "0 0 20px rgba(0,255,255,0.15)",
     },
+    listRow: {
+      display: "flex", alignItems: "center", gap: 16, padding: "10px 16px",
+      borderBottom: "1px solid #2D1B4E",
+      background: "rgba(26, 16, 60, 0.4)",
+      transition: "all 0.2s linear",
+    },
+    listRowHover: {
+      background: "rgba(26, 16, 60, 0.8)",
+      boxShadow: "inset 2px 0 0 #00FFFF",
+    },
     badge: {
       fontSize: 11, padding: "2px 8px", borderRadius: 0, fontWeight: 700,
       background: "rgba(255,0,255,0.15)", color: "#FF00FF",
@@ -305,6 +334,13 @@ const systems: Record<string, DesignSystem> = {
       transition: "border-color 0.1s",
     },
     cardHover: { borderColor: "#00ff4160" },
+    listRow: {
+      display: "flex", alignItems: "center", gap: 12, padding: "6px 0",
+      borderBottom: "1px solid #00ff4115",
+      transition: "border-color 0.1s",
+      fontFamily: "JetBrains Mono, monospace", fontSize: 13,
+    },
+    listRowHover: { borderColor: "#00ff4140" },
     badge: {
       fontSize: 11, padding: "0px 6px", borderRadius: 0, fontWeight: 700,
       background: "#00ff4120", color: "#00ff41", border: "1px solid #00ff4140",
@@ -341,6 +377,27 @@ const systems: Record<string, DesignSystem> = {
     }),
   },
 };
+
+// ── SVG Icons (inline, no dependency) ───────────────────────────
+
+function GridIcon({ color, size = 16 }: { color: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+    </svg>
+  );
+}
+
+function ListIcon({ color, size = 16 }: { color: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+  );
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -382,6 +439,7 @@ export default function App() {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   useEffect(() => {
     fetch("/api/jellyfin/status")
@@ -429,6 +487,48 @@ export default function App() {
   const isBotanical = dsName === "Botanical";
   const isVaporwave = dsName === "Vaporwave";
 
+  // Theme-aware toggle button style
+  function toggleBtnStyle(active: boolean): React.CSSProperties {
+    if (is90s) return {
+      ...ds.button, padding: "4px 8px", fontSize: 11,
+      ...(active ? ds.buttonActive : {}),
+    };
+    if (isBrutal) return {
+      background: active ? "#FF6B6B" : "#FFFFFF",
+      border: "3px solid #000000", borderRadius: 0, padding: "6px 8px",
+      cursor: "pointer", boxShadow: active ? "3px 3px 0 #000" : "none",
+      transition: "transform 0.1s",
+    };
+    if (isTerminal) return {
+      background: active ? "#00ff4115" : "transparent",
+      border: active ? "1px solid #00ff41" : "1px solid #00ff4130",
+      borderRadius: 0, padding: "4px 8px", cursor: "pointer", color: "#00ff41",
+      fontFamily: "JetBrains Mono, monospace", fontSize: 11,
+    };
+    if (isVaporwave) return {
+      background: active ? "rgba(0,255,255,0.15)" : "transparent",
+      border: active ? "1px solid #00FFFF" : "1px solid #2D1B4E",
+      borderRadius: 0, padding: "5px 8px", cursor: "pointer",
+      transition: "all 0.2s linear",
+      ...(active ? { boxShadow: "0 0 8px rgba(0,255,255,0.2)" } : {}),
+    };
+    // Botanical (default)
+    return {
+      background: active ? "#2D3A31" : "transparent",
+      border: "1px solid #E6E2DA", borderRadius: 8, padding: "6px 10px",
+      cursor: "pointer", transition: "all 0.3s ease-out",
+      ...(active ? { borderColor: "#2D3A31" } : {}),
+    };
+  }
+
+  function toggleIconColor(active: boolean): string {
+    if (is90s) return "#000000";
+    if (isBrutal) return "#000000";
+    if (isTerminal) return "#00ff41";
+    if (isVaporwave) return active ? "#00FFFF" : "#E0E0E050";
+    return active ? "#F9F8F4" : "#7A8578";
+  }
+
   return (
     <div style={{
       background: ds.colors.bg, color: ds.colors.text, minHeight: "100vh",
@@ -456,7 +556,7 @@ export default function App() {
             textShadow: "0 0 10px rgba(255,0,255,0.4)",
           } : {}),
         }}>
-          {isTerminal ? "> virtual-tv" : isVaporwave ? "Virtual TV" : isBotanical ? "Virtual TV" : "Virtual TV"}
+          {isTerminal ? "> virtual-tv" : "Virtual TV"}
         </h1>
         <StatusPill status={status} ds={ds} isTerminal={isTerminal} isVaporwave={isVaporwave} />
       </header>
@@ -484,9 +584,6 @@ export default function App() {
                     ...(active ? ds.buttonActive : {}),
                     display: "flex", alignItems: "center", gap: 8,
                     fontSize: is90s ? 11 : 13,
-                    ...(isVaporwave ? {
-                      // Counter-skew the text content
-                    } : {}),
                   }}
                 >
                   {isVaporwave ? (
@@ -544,7 +641,6 @@ export default function App() {
                 style={{
                   ...ds.button,
                   ...(active ? ds.buttonActive : {}),
-                  ...(isVaporwave && !active ? {} : {}),
                 }}
               >
                 {isVaporwave ? (
@@ -581,19 +677,43 @@ export default function App() {
         {/* Items */}
         {selectedLibrary && (
           <>
-            <div style={ds.sectionLabel}>
-              {isTerminal
-                ? `$ find . -type f | wc -l  # ${totalCount}`
-                : isVaporwave
-                  ? `> ITEMS [${totalCount}]`
-                  : <>Items {totalCount > 0 && <span style={{ color: ds.colors.accent }}>({totalCount})</span>}</>
-              }
+            {/* Section header with view toggle */}
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              marginBottom: is90s ? 8 : isBotanical ? 16 : 12,
+            }}>
+              <div style={{ ...ds.sectionLabel, marginBottom: 0 }}>
+                {isTerminal
+                  ? `$ find . -type f | wc -l  # ${totalCount}`
+                  : isVaporwave
+                    ? `> ITEMS [${totalCount}]`
+                    : <>Items {totalCount > 0 && <span style={{ color: ds.colors.accent }}>({totalCount})</span>}</>
+                }
+              </div>
+              <div style={{ display: "flex", gap: is90s ? 0 : 4 }}>
+                <button
+                  onClick={() => setViewMode("grid")}
+                  style={toggleBtnStyle(viewMode === "grid")}
+                  title="Grid view"
+                >
+                  <GridIcon color={toggleIconColor(viewMode === "grid")} size={is90s ? 14 : 16} />
+                </button>
+                <button
+                  onClick={() => setViewMode("list")}
+                  style={toggleBtnStyle(viewMode === "list")}
+                  title="List view"
+                >
+                  <ListIcon color={toggleIconColor(viewMode === "list")} size={is90s ? 14 : 16} />
+                </button>
+              </div>
             </div>
+
             {loading ? (
               <p style={{ color: ds.colors.textDim }}>
                 {isVaporwave ? "> LOADING..." : "Loading..."}
               </p>
-            ) : (
+            ) : viewMode === "grid" ? (
+              /* ── Grid View ─────────────────────────────── */
               <div style={{
                 display: "grid",
                 gridTemplateColumns: `repeat(auto-fill, minmax(${is90s ? "240px" : "260px"}, 1fr))`,
@@ -654,6 +774,87 @@ export default function App() {
                     )}
                   </div>
                 ))}
+              </div>
+            ) : (
+              /* ── List View ─────────────────────────────── */
+              <div style={{
+                ...(is90s ? {
+                  border: "2px solid", borderColor: "#ffffff #808080 #808080 #ffffff",
+                  boxShadow: "inset -1px -1px 0 #404040, inset 1px 1px 0 #dfdfdf",
+                } : {}),
+                ...(isBrutal ? { border: "4px solid #000000" } : {}),
+                ...(isVaporwave ? { border: "1px solid #2D1B4E" } : {}),
+                ...(isBotanical ? {
+                  background: "#FFFFFF", borderRadius: 24, overflow: "hidden",
+                  border: "1px solid #E6E2DA",
+                  boxShadow: "0 4px 6px -1px rgba(45, 58, 49, 0.05)",
+                } : {}),
+              }}>
+                {items.map((item, i) => {
+                  const hovered = hoveredCard === item.Id;
+                  return (
+                    <div
+                      key={item.Id}
+                      onMouseEnter={() => setHoveredCard(item.Id)}
+                      onMouseLeave={() => setHoveredCard(null)}
+                      style={{
+                        ...ds.listRow,
+                        ...(hovered ? ds.listRowHover : {}),
+                        ...(is90s ? {
+                          background: hovered ? "#000080" : (i % 2 === 0 ? "#FFFFFF" : "#E8E8E8"),
+                          color: hovered ? "#FFFFFF" : "#000000",
+                        } : {}),
+                        ...(i === items.length - 1 ? { borderBottom: "none" } : {}),
+                      }}
+                    >
+                      {/* Badge */}
+                      <span style={{
+                        ...ds.badge, flexShrink: 0, minWidth: is90s ? 50 : 56,
+                        textAlign: "center" as const,
+                      }}>
+                        {item.Type}
+                      </span>
+
+                      {/* Name */}
+                      <span style={{
+                        flex: 1, fontWeight: is90s || isBrutal ? 700 : isBotanical ? 500 : 600,
+                        fontFamily: isBotanical ? ds.headingFamily : ds.fontFamily,
+                        ...(is90s ? { fontSize: 12 } : {}),
+                        ...(isTerminal ? { fontSize: 13 } : {}),
+                        ...(isVaporwave ? {
+                          color: "#00FFFF",
+                          textShadow: hovered ? "0 0 5px rgba(0,255,255,0.5)" : "none",
+                        } : {}),
+                        ...(isBotanical ? { fontSize: 15, color: ds.colors.heading } : {}),
+                      }}>
+                        {formatEpisode(item)}
+                      </span>
+
+                      {/* Genres (hidden on small themes) */}
+                      {!is90s && item.Genres && item.Genres.length > 0 && (
+                        <span style={{
+                          display: "flex", gap: 4, flexShrink: 0,
+                        }}>
+                          {item.Genres.slice(0, 2).map((g) => (
+                            <span key={g} style={ds.genreTag}>{g}</span>
+                          ))}
+                        </span>
+                      )}
+
+                      {/* Runtime */}
+                      {item.RunTimeTicks > 0 && (
+                        <span style={{
+                          fontSize: 12, color: ds.colors.textDim, flexShrink: 0,
+                          minWidth: 48, textAlign: "right" as const,
+                          ...(is90s && hovered ? { color: "#FFFFFF" } : {}),
+                          ...(is90s ? { fontFamily: "Courier New, monospace", fontSize: 11 } : {}),
+                        }}>
+                          {formatRuntime(item.RunTimeTicks)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
