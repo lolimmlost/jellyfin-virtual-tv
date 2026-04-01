@@ -4,8 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: virtual-tv
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       - JELLYFIN_URL=${JELLYFIN_URL:-http://10.0.0.227:8096}
       - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
