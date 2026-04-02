@@ -151,6 +151,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   const codecArgs = channel.streamMode === "copy"
     ? ["-c", "copy"]
     : ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "23",
+       "-force_key_frames", "expr:gte(t,n_forced*2)",
        "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
 
   const ffmpegArgs = [
@@ -161,6 +162,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     ...mapArgs,
     ...codecArgs,
     "-f", "mpegts",
+    "-mpegts_flags", "resend_headers",
     "-fflags", "+genpts",
     "pipe:1",
   ];

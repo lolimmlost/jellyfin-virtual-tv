@@ -159,6 +159,56 @@ src/
     types.ts              # Shared TypeScript types
 ```
 
+## Troubleshooting
+
+### Stale EPG / Guide shows wrong content
+
+Jellyfin caches EPG data aggressively. After updating channels or changing schedule logic, the guide may still show old data even after restarting Jellyfin.
+
+**Method 1: API refresh (try first)**
+
+Trigger the "Refresh Guide" scheduled task via the Jellyfin API:
+
+```bash
+curl -X POST "http://your-jellyfin:8096/ScheduledTasks/Running/TASK_ID" \
+  -H 'Authorization: MediaBrowser Token="YOUR_API_KEY"'
+```
+
+To find the task ID:
+```bash
+curl "http://your-jellyfin:8096/ScheduledTasks" \
+  -H 'Authorization: MediaBrowser Token="YOUR_API_KEY"' | grep -i "refresh guide"
+```
+
+**Method 2: Delete cached EPG files**
+
+If the API refresh isn't enough, clear the cache files directly:
+
+1. Stop Jellyfin
+2. Delete the EPG cache files from Jellyfin's config directory:
+   ```bash
+   rm <jellyfin-config>/cache/*_channels
+   rm <jellyfin-config>/cache/xmltv/*.xml
+   rm -rf <jellyfin-config>/cache/channels/*
+   ```
+3. Start Jellyfin
+4. Run "Refresh Guide" from Dashboard > Scheduled Tasks
+
+### EPG and stream showing different content
+
+This happens when Jellyfin's cached EPG is from a previous schedule generation. Both the EPG (`/iptv/epg.xml`) and stream (`/iptv/stream/:id`) use the same schedule engine — if they disagree, the issue is always a stale Jellyfin cache. Clear it using the methods above.
+
+### No content on a channel
+
+- Check that the channel's genre filters match what Jellyfin actually has. Genre names can differ between libraries (e.g., TV shows use "Sci-Fi" while movies use "Science Fiction").
+- Use the items endpoint to test: `GET /api/jellyfin/items?genres=YourGenre&libraryId=yourLibId`
+- For anime, use "Animation" — Jellyfin has no "Anime" genre.
+- Multiple genres use OR logic (matches any), not AND.
+
+### Video freezes at episode boundaries
+
+Set the channel's stream mode to **Transcode** (the default). Passthrough (`copy`) mode requires all files in the channel to have identical codecs, resolution, and audio format. Mixed-codec libraries need transcoding for seamless playback.
+
 ## License
 
 MIT
