@@ -25,12 +25,30 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
   const types = filter.itemTypes?.length ? filter.itemTypes.join(",") : "Movie,Episode";
   params.set("includeItemTypes", types);
 
-  if (filter.genres?.length) {
-    params.set("genres", filter.genres.join(","));
-  }
-
   if (filter.tags?.length) {
     params.set("tags", filter.tags.join(","));
+  }
+
+  // Multiple genres use OR logic — query each genre separately and deduplicate
+  if (filter.genres && filter.genres.length > 1) {
+    const seen = new Set<string>();
+    const allItems: JellyfinItem[] = [];
+    for (const genre of filter.genres) {
+      const genreParams = new URLSearchParams(params);
+      genreParams.set("genres", genre);
+      const items = await queryAcrossLibraries(genreParams, filter.libraryIds, queryItems);
+      for (const item of items) {
+        if (!seen.has(item.Id)) {
+          seen.add(item.Id);
+          allItems.push(item);
+        }
+      }
+    }
+    return allItems.slice(0, limit);
+  }
+
+  if (filter.genres?.length === 1) {
+    params.set("genres", filter.genres[0]);
   }
 
   // Query per library or all
@@ -41,7 +59,7 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
       const items = await queryItems(params);
       allItems.push(...items);
     }
-    return shuffleArray(allItems).slice(0, limit);
+    return allItems.slice(0, limit);
   }
 
   return queryItems(params);
