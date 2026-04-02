@@ -11,9 +11,32 @@ Virtual live TV channels from your Jellyfin media library. Turn your media colle
 - **M3U Tuner** — Standard IPTV tuner format, works natively with Jellyfin Live TV
 - **Smart Filtering** — Filter content by library, genre, tags, item type (Movies/Episodes), or title match
 - **24-Hour Scheduling** — Deterministic daily schedules with random or sequential shuffle modes
-- **Stream Proxy** — Proxies streams through to Jellyfin so clients see real "live TV" playback
-- **Channel Management UI** — React-based web interface for creating and managing channels
+- **GPU Transcoding** — Offloads HEVC/H264 transcoding to Jellyfin's GPU for seamless mixed-codec playback
+- **Channel Management UI** — React-based web interface with now-playing, 48h schedule preview, and genre picker
 - **Docker Ready** — Multi-stage Docker build, deploys easily with Coolify or any Docker host
+
+## Screenshots
+
+### Channel Management
+Create and manage channels with real-time schedule preview, now-playing status, and content filters.
+
+![Channel Detail](docs/channel-detail.png)
+*Channel detail view with now-playing, filters, settings, and 48h schedule*
+
+![Channel Editor](docs/channel-editor.png)
+*Edit channel settings with live schedule preview sidebar*
+
+![Genre Picker](docs/genre-picker.png)
+*Content filters with genre picker pulled from your Jellyfin library*
+
+### Jellyfin Integration
+Channels appear natively in Jellyfin's Live TV with full EPG data and thumbnails.
+
+![Jellyfin Programs](docs/epg-preview.png)
+*"On Now" view in Jellyfin showing what's playing across all channels*
+
+![Jellyfin EPG Guide](docs/epg-guide.png)
+*Full EPG grid view in Jellyfin's Live TV guide*
 
 ## Tech Stack
 
