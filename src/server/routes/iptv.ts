@@ -122,7 +122,8 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
 
   // Proxy the stream from Jellyfin instead of redirecting
   try {
-    const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?static=true&api_key=${apiKey}`;
+    const startTicks = current.offsetSeconds * 10_000_000;
+    const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?static=true&StartTimeTicks=${startTicks}&api_key=${apiKey}`;
     const upstream = await fetch(streamUrl);
 
     if (!upstream.ok) {
