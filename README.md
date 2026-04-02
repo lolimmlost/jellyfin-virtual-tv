@@ -33,13 +33,16 @@ Create and manage channels with real-time schedule preview, now-playing status, 
 *Content filters with genre picker pulled from your Jellyfin library*
 
 ### Jellyfin Integration
-Channels appear natively in Jellyfin's Live TV with full EPG data and thumbnails.
+Channels appear natively in Jellyfin's Live TV with full EPG data, thumbnails, and auto-populated channel logos.
+
+![Jellyfin Channels](docs/channel-list-jellyfin.png)
+*All 15 channels with poster art on Jellyfin's Channels page*
 
 ![Jellyfin Programs](docs/epg-preview.png)
 *"On Now" view in Jellyfin showing what's playing across all channels*
 
 ![Jellyfin EPG Guide](docs/epg-guide.png)
-*Full EPG grid view in Jellyfin's Live TV guide*
+*Full EPG grid view in Jellyfin's Live TV guide with channel logos*
 
 ## Tech Stack
 
