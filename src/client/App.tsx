@@ -138,6 +138,7 @@ export default function App() {
         filters: updated.filters,
         shuffleMode: updated.shuffleMode,
         streamMode: updated.streamMode,
+        audioLanguage: updated.audioLanguage,
         logoUrl: updated.logoUrl,
       }),
     });
@@ -326,11 +327,12 @@ function ChannelEditor({ channel, onSave, onCancel }: {
   const [number, setNumber] = useState(channel.number);
   const [shuffleMode, setShuffleMode] = useState(channel.shuffleMode);
   const [streamMode, setStreamMode] = useState(channel.streamMode || "transcode");
+  const [audioLanguage, setAudioLanguage] = useState(channel.audioLanguage || "eng");
   const [filters, setFilters] = useState<ChannelFilter>(channel.filters);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ ...channel, name, number, shuffleMode, streamMode, filters });
+    onSave({ ...channel, name, number, shuffleMode, streamMode, audioLanguage, filters });
   }
 
   return (
@@ -387,6 +389,31 @@ function ChannelEditor({ channel, onSave, onCancel }: {
             {streamMode === "transcode"
               ? "Normalizes all media to H.264+AAC — smooth transitions between episodes with different formats"
               : "Passes through original codecs — lower CPU but may glitch if episodes have different codecs/resolutions"}
+          </span>
+        </Field>
+        <Field label="Audio Language">
+          <div style={{ display: "flex", gap: 8 }}>
+            {([["eng", "English"], ["jpn", "Japanese"], ["spa", "Spanish"]] as const).map(([code, label]) => (
+              <button key={code} type="button" onClick={() => setAudioLanguage(code)} style={{
+                ...buttonStyle,
+                background: audioLanguage === code ? c.accent : c.surface,
+                color: audioLanguage === code ? c.black : c.text,
+                padding: "8px 16px",
+              }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <input
+              value={audioLanguage}
+              onChange={(e) => setAudioLanguage(e.target.value.toLowerCase())}
+              style={{ ...inputStyle, width: 120 }}
+              placeholder="ISO 639-2 code"
+            />
+          </div>
+          <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700 }}>
+            Preferred audio track language (ISO 639-2 code). Falls back to first available track if not found.
           </span>
         </Field>
       </Section>

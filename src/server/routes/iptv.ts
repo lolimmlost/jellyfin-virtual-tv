@@ -142,16 +142,23 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   res.setHeader("Content-Type", "video/mp2t");
   res.setHeader("Transfer-Encoding", "chunked");
 
+  const lang = channel.audioLanguage || "eng";
+
+  // Select preferred audio language via metadata-based mapping
+  // Falls back to default stream selection if preferred language not found
+  const mapArgs = ["-map", "0:v:0", "-map", `0:a:m:language:${lang}?`, "-map", "0:a:0?"];
+
   const codecArgs = channel.streamMode === "copy"
     ? ["-c", "copy"]
     : ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "23",
-       "-c:a", "aac", "-b:a", "192k"];
+       "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
 
   const ffmpegArgs = [
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
     "-i", concatFile,
+    ...mapArgs,
     ...codecArgs,
     "-f", "mpegts",
     "-fflags", "+genpts",

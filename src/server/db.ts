@@ -31,11 +31,13 @@ db.exec(`
   )
 `);
 
-// Migration: add stream_mode column
-try {
-  db.exec(`ALTER TABLE channels ADD COLUMN stream_mode TEXT NOT NULL DEFAULT 'transcode'`);
-} catch {
-  // Column already exists
+// Migrations
+const migrations = [
+  `ALTER TABLE channels ADD COLUMN stream_mode TEXT NOT NULL DEFAULT 'transcode'`,
+  `ALTER TABLE channels ADD COLUMN audio_language TEXT NOT NULL DEFAULT 'eng'`,
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch { /* Column already exists */ }
 }
 
 export default db;
@@ -47,6 +49,7 @@ export interface ChannelRow {
   filters: string;
   shuffle_mode: string;
   stream_mode: string;
+  audio_language: string;
   logo_url: string | null;
   created_at: string;
   updated_at: string;
@@ -60,6 +63,7 @@ export function rowToChannel(row: ChannelRow): Channel {
     filters: JSON.parse(row.filters) as ChannelFilter,
     shuffleMode: row.shuffle_mode as Channel["shuffleMode"],
     streamMode: (row.stream_mode || "transcode") as Channel["streamMode"],
+    audioLanguage: row.audio_language || "eng",
     logoUrl: row.logo_url ?? undefined,
   };
 }

@@ -5,6 +5,7 @@ export interface Channel {
   filters: ChannelFilter;
   shuffleMode: "random" | "sequential";
   streamMode: "transcode" | "copy";
+  audioLanguage: string;
   logoUrl?: string;
 }
 
