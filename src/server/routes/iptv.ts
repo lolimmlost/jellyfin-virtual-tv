@@ -128,7 +128,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     "-ss", String(current.offsetSeconds),
     "-i", streamUrl,
     "-c", "copy",
-    "-f", "mpegts",
+    "-f", "matroska",
     "-fflags", "+genpts",
     "pipe:1",
   ];
@@ -137,7 +137,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  res.setHeader("Content-Type", "video/mp2t");
+  res.setHeader("Content-Type", "video/x-matroska");
   res.setHeader("Transfer-Encoding", "chunked");
 
   ffmpeg.stdout.pipe(res);
