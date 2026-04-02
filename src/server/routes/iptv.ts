@@ -1,5 +1,8 @@
 import { Router, type Request, type Response } from "express";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn } from "child_process";
+import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { getAllChannels, getSchedule, getCurrentSlot, getRemainingSlots } from "../schedule.js";
 import type { Channel } from "../../shared/types.js";
 
@@ -104,6 +107,7 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
 });
 
 // Stream endpoint — continuously chains episodes for seamless live TV
+// Uses ffmpeg concat demuxer for continuous timestamps across episode boundaries
 iptvRouter.get("/stream/:channelId", async (req, res) => {
   const channel = findChannel(req, res);
   if (!channel) return;
@@ -121,59 +125,60 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
+  // Build concat demuxer playlist file
+  const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
+  const concatFile = join(tempDir, "playlist.txt");
+
+  let concatContent = "";
+  for (const { slot, offsetSeconds } of slots) {
+    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream?static=true&api_key=${apiKey}`;
+    concatContent += `file '${streamUrl}'\n`;
+    if (offsetSeconds > 0) {
+      concatContent += `inpoint ${offsetSeconds}\n`;
+    }
+  }
+  writeFileSync(concatFile, concatContent);
+
   res.setHeader("Content-Type", "video/mp2t");
   res.setHeader("Transfer-Encoding", "chunked");
 
-  let cancelled = false;
-  let currentFfmpeg: ChildProcess | null = null;
+  const ffmpegArgs = [
+    "-f", "concat",
+    "-safe", "0",
+    "-protocol_whitelist", "file,http,https,tcp,tls",
+    "-i", concatFile,
+    "-c", "copy",
+    "-f", "mpegts",
+    "-fflags", "+genpts",
+    "pipe:1",
+  ];
 
-  req.on("close", () => {
-    cancelled = true;
-    if (currentFfmpeg) currentFfmpeg.kill("SIGTERM");
+  const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
-  for (let i = 0; i < slots.length; i++) {
-    if (cancelled || res.writableEnded) break;
+  req.on("close", () => {
+    ffmpeg.kill("SIGTERM");
+  });
 
-    const { slot, offsetSeconds } = slots[i];
-    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream?static=true&api_key=${apiKey}`;
+  ffmpeg.stdout.on("data", (chunk: Buffer) => {
+    if (!res.writableEnded) {
+      res.write(chunk);
+    } else {
+      ffmpeg.kill("SIGTERM");
+    }
+  });
 
-    const ffmpegArgs = [
-      "-ss", String(offsetSeconds),
-      "-i", streamUrl,
-      "-c", "copy",
-      "-f", "mpegts",
-      "-fflags", "+genpts",
-      "pipe:1",
-    ];
+  ffmpeg.stderr.on("data", () => {
+    // Consume stderr to prevent buffer overflow
+  });
 
-    await new Promise<void>((resolve) => {
-      const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      currentFfmpeg = ffmpeg;
-
-      ffmpeg.stdout.on("data", (chunk: Buffer) => {
-        if (!res.writableEnded) {
-          res.write(chunk);
-        } else {
-          ffmpeg.kill("SIGTERM");
-        }
-      });
-
-      ffmpeg.stderr.on("data", () => {
-        // Consume stderr to prevent buffer overflow
-      });
-
-      ffmpeg.on("error", () => resolve());
-      ffmpeg.on("close", () => {
-        currentFfmpeg = null;
-        resolve();
-      });
-    });
-  }
-
-  if (!res.writableEnded) res.end();
+  ffmpeg.on("close", () => {
+    // Clean up temp concat file
+    try { unlinkSync(concatFile); } catch {}
+    try { unlinkSync(tempDir); } catch {}
+    if (!res.writableEnded) res.end();
+  });
 });
 
 // Format date as XMLTV format: "20260401120000 +0000"
