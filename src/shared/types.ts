@@ -23,6 +23,7 @@ export interface ScheduleSlot {
   endTime: string;
   durationTicks: number;
   filePath: string;
+  imageUrl?: string;
 }
 
 export interface JellyfinItem {
@@ -32,6 +33,7 @@ export interface JellyfinItem {
   Path: string;
   RunTimeTicks: number;
   SeriesName?: string;
+  SeriesId?: string;
   SeasonName?: string;
   IndexNumber?: number;
   ParentIndexNumber?: number;

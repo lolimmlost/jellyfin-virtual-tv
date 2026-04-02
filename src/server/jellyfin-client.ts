@@ -17,7 +17,7 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
 
   const params = new URLSearchParams();
   params.set("recursive", "true");
-  params.set("fields", "Path,Genres,Tags,Overview,MediaSources");
+  params.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
   params.set("limit", String(limit));
   params.set("sortBy", "Random");
 
@@ -108,7 +108,7 @@ async function getEpisodes(seriesId: string, limit: number): Promise<JellyfinIte
   params.set("parentId", seriesId);
   params.set("includeItemTypes", "Episode");
   params.set("recursive", "true");
-  params.set("fields", "Path,Genres,Tags,Overview,MediaSources");
+  params.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
   params.set("sortBy", "SortName");
   params.set("sortOrder", "Ascending");
   params.set("limit", String(limit));

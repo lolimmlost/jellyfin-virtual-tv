@@ -68,6 +68,7 @@ export async function generateSchedule(channel: Channel): Promise<ScheduleSlot[]
       endTime: slotEnd.toISOString(),
       durationTicks: item.RunTimeTicks,
       filePath: item.Path || "",
+      imageUrl: buildImageUrl(item),
     });
 
     currentTime += durationMs;
@@ -130,6 +131,21 @@ function shuffleDeterministic(items: JellyfinItem[], seed: string): JellyfinItem
 
 function dateKey(d: Date): string {
   return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+}
+
+function buildImageUrl(item: JellyfinItem): string | undefined {
+  const jellyfinUrl = process.env.JELLYFIN_URL;
+  if (!jellyfinUrl) return undefined;
+
+  // Use the item's own Primary image if available
+  if (item.ImageTags?.Primary) {
+    return `${jellyfinUrl}/Items/${item.Id}/Images/Primary`;
+  }
+  // For episodes, fall back to the series image
+  if (item.Type === "Episode" && item.SeriesId) {
+    return `${jellyfinUrl}/Items/${item.SeriesId}/Images/Primary`;
+  }
+  return undefined;
 }
 
 function formatTitle(item: JellyfinItem): string {

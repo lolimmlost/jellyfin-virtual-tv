@@ -48,6 +48,9 @@ iptvRouter.get("/epg.xml", async (_req, res) => {
       const stop = formatXmltvDate(new Date(slot.endTime));
       xml += `  <programme start="${start}" stop="${stop}" channel="${ch.id}">\n`;
       xml += `    <title>${escapeXml(slot.title)}</title>\n`;
+      if (slot.imageUrl) {
+        xml += `    <icon src="${escapeXml(slot.imageUrl)}" />\n`;
+      }
       xml += `  </programme>\n`;
     }
   }
