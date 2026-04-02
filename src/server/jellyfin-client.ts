@@ -19,7 +19,8 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
   params.set("recursive", "true");
   params.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
   params.set("limit", String(limit));
-  params.set("sortBy", "Random");
+  params.set("sortBy", "SortName");
+  params.set("sortOrder", "Ascending");
 
   const types = filter.itemTypes?.length ? filter.itemTypes.join(",") : "Movie,Episode";
   params.set("includeItemTypes", types);
