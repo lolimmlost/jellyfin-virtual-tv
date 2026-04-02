@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { Channel, ChannelFilter, JellyfinLibrary, ScheduleSlot } from "../shared/types";
 
 // ── Neo-Brutalism Dark ──────────────────────────────────────────
@@ -251,7 +251,11 @@ export default function App() {
                     </span>
                     <span style={{ fontSize: 14, fontWeight: 700 }}>{ch.name}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: c.textDim, marginTop: 4, marginLeft: 44, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  <div style={{
+                    fontSize: 11, color: c.textDim, marginTop: 4, marginLeft: 44, fontWeight: 700,
+                    textTransform: "uppercase", letterSpacing: "0.05em",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220,
+                  }}>
                     {ch.shuffleMode} · {ch.streamMode === "copy" ? "passthrough" : "transcode"} · {summarizeFilters(ch.filters)}
                   </div>
                 </div>
@@ -354,9 +358,10 @@ function NowPlaying({ channelId }: { channelId: string }) {
 
 // ── Schedule Guide ─────────────────────────────────────────────
 
-function ScheduleGuide({ channelId, maxSlots }: { channelId: string; maxSlots?: number }) {
+function ScheduleGuide({ channelId, maxSlots, compact }: { channelId: string; maxSlots?: number; compact?: boolean }) {
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [loading, setLoading] = useState(true);
+  const nowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -369,6 +374,13 @@ function ScheduleGuide({ channelId, maxSlots }: { channelId: string; maxSlots?: 
       .catch(() => setLoading(false));
   }, [channelId]);
 
+  // Auto-scroll to "now playing" once slots load
+  useEffect(() => {
+    if (!loading && nowRef.current) {
+      nowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [loading, slots]);
+
   if (loading) {
     return <div style={{ color: c.textDim, fontSize: 13, fontWeight: 700, padding: 16 }}>Loading schedule...</div>;
   }
@@ -379,6 +391,7 @@ function ScheduleGuide({ channelId, maxSlots }: { channelId: string; maxSlots?: 
 
   const now = Date.now();
   const displaySlots = maxSlots ? slots.slice(0, maxSlots) : slots;
+  const imgSize = compact ? { w: 48, h: 28 } : { w: 64, h: 36 };
 
   // Group by date
   const groups: { date: string; slots: ScheduleSlot[] }[] = [];
@@ -404,17 +417,29 @@ function ScheduleGuide({ channelId, maxSlots }: { channelId: string; maxSlots?: 
           </div>
           {group.slots.map((slot, i) => {
             const isCurrent = now >= new Date(slot.startTime).getTime() && now < new Date(slot.endTime).getTime();
+            const isPast = new Date(slot.endTime).getTime() < now;
             return (
-              <div key={`${slot.itemId}-${i}`} style={{
-                display: "flex", gap: 12, padding: "8px 0",
-                borderBottom: `1px solid ${c.border}10`,
-                opacity: new Date(slot.endTime).getTime() < now ? 0.4 : 1,
-              }}>
+              <div
+                key={`${slot.itemId}-${i}`}
+                ref={isCurrent ? nowRef : undefined}
+                style={{
+                  display: "flex", gap: compact ? 8 : 12, padding: compact ? "6px 0" : "8px 0",
+                  borderBottom: `1px solid ${c.border}10`,
+                  opacity: isPast ? 0.35 : 1,
+                  background: isCurrent ? `${c.accent}08` : "transparent",
+                  borderLeft: isCurrent ? `3px solid ${c.accent}` : "3px solid transparent",
+                  paddingLeft: 8,
+                  transition: "opacity 0.2s",
+                }}
+              >
                 {slot.imageUrl && (
                   <img
                     src={slot.imageUrl}
                     alt=""
-                    style={{ width: 64, height: 36, objectFit: "cover", border: `2px solid ${isCurrent ? c.accent : c.border}40`, flexShrink: 0 }}
+                    style={{
+                      width: imgSize.w, height: imgSize.h, objectFit: "cover",
+                      border: `2px solid ${isCurrent ? c.accent : c.border}40`, flexShrink: 0,
+                    }}
                   />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -426,12 +451,11 @@ function ScheduleGuide({ channelId, maxSlots }: { channelId: string; maxSlots?: 
                       }}>NOW</span>
                     )}
                     <span style={{
-                      fontSize: 13, fontWeight: 700,
-                      color: isCurrent ? c.text : c.text,
+                      fontSize: compact ? 12 : 13, fontWeight: 700,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     }}>{slot.title}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: c.textDim, fontWeight: 700, marginTop: 2 }}>
+                  <div style={{ fontSize: compact ? 10 : 11, color: c.textDim, fontWeight: 700, marginTop: 2 }}>
                     {formatTime(slot.startTime)} - {formatTime(slot.endTime)} · {formatDuration(slot.durationTicks)}
                   </div>
                 </div>
@@ -485,11 +509,24 @@ function ChannelDetail({ channel, onEdit, onDelete }: {
         <NowPlaying channelId={channel.id} />
       </Section>
 
-      <Section title="Filters">
-        <FilterSummary filters={channel.filters} />
-      </Section>
+      <div style={{ display: "flex", gap: 24 }}>
+        <div style={{ flex: 1 }}>
+          <Section title="Filters">
+            <FilterSummary filters={channel.filters} />
+          </Section>
+        </div>
+        <div style={{ flex: 1 }}>
+          <Section title="Settings">
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <DetailRow label="Shuffle" value={channel.shuffleMode} />
+              <DetailRow label="Stream" value={channel.streamMode === "copy" ? "Passthrough" : "Transcode"} />
+              <DetailRow label="Audio" value={channel.audioLanguage || "eng"} />
+            </div>
+          </Section>
+        </div>
+      </div>
 
-      <Section title="Schedule">
+      <Section title="48h Schedule">
         <ScheduleGuide channelId={channel.id} />
       </Section>
     </div>
@@ -622,7 +659,7 @@ function ChannelEditor({ channel, onSave, onCancel }: {
           }}>
             48h Schedule Preview
           </h3>
-          <ScheduleGuide channelId={channel.id} />
+          <ScheduleGuide channelId={channel.id} compact />
         </div>
       </div>
     </div>
@@ -925,6 +962,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
         fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em",
       }}>{label}</label>
       {children}
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+      <span style={{ color: c.textDim, fontWeight: 700, textTransform: "uppercase", fontSize: 11, letterSpacing: "0.05em" }}>{label}</span>
+      <span style={{ fontWeight: 800 }}>{value}</span>
     </div>
   );
 }
