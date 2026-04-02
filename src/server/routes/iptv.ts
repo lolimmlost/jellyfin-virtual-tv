@@ -6,7 +6,9 @@ import type { Channel } from "../../shared/types.js";
 export const iptvRouter = Router();
 
 function findChannel(req: Request, res: Response): Channel | null {
-  const channel = getAllChannels().find((c) => c.id === req.params.channelId);
+  // Strip .ts extension if present (used in M3U URLs for Jellyfin format detection)
+  const channelId = req.params.channelId.replace(/\.ts$/, "");
+  const channel = getAllChannels().find((c) => c.id === channelId);
   if (!channel) {
     res.status(404).json({ error: "Channel not found" });
     return null;
@@ -25,7 +27,7 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
   for (const ch of channels) {
     const logoParam = ch.logoUrl ? ` tvg-logo="${ch.logoUrl}"` : "";
     m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${ch.name}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
-    m3u += `${baseUrl}/iptv/stream/${ch.id}\n\n`;
+    m3u += `${baseUrl}/iptv/stream/${ch.id}.ts\n\n`;
   }
 
   res.setHeader("Content-Type", "audio/x-mpegurl");
