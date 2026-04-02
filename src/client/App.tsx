@@ -179,11 +179,11 @@ export default function App() {
             fontSize: 10, fontWeight: 800, fontFamily: font, color: c.textDim,
             textTransform: "uppercase", letterSpacing: "0.15em", lineHeight: 1,
           }}>
-            <span style={{ display: "block", fontSize: 9, letterSpacing: "0.2em", opacity: 0.6 }}>styled by</span>
+            <span style={{ display: "block", fontSize: 9, letterSpacing: "0.2em", opacity: 0.6 }}>by</span>
             <span style={{
               color: c.yellow, fontSize: 13, letterSpacing: "0.1em",
               animation: "neonFlicker 4s ease-in-out infinite",
-            }}>appahouse</span>
+            }}>AppaHouse</span>
           </span>
         </div>
         <StatusPill status={status} />
