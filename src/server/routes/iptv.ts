@@ -3,7 +3,7 @@ import { spawn, execSync } from "child_process";
 import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { getAllChannels, getSchedule, getCurrentSlot, getRemainingSlots } from "../schedule.js";
+import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot, getRemainingSlots } from "../schedule.js";
 import type { Channel } from "../../shared/types.js";
 
 export const iptvRouter = Router();
@@ -43,7 +43,14 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
   let m3u = "#EXTM3U\n\n";
 
   for (const ch of channels) {
-    const logoParam = ch.logoUrl ? ` tvg-logo="${ch.logoUrl}"` : "";
+    // Use custom logo, or fall back to the currently-playing item's image
+    let logoUrl = ch.logoUrl;
+    if (!logoUrl) {
+      const current = await getCurrentSlot(ch);
+      const img = current?.slot.imageUrl || (await getFirstSlot(ch))?.imageUrl;
+      if (img) logoUrl = img;
+    }
+    const logoParam = logoUrl ? ` tvg-logo="${logoUrl}"` : "";
     m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${ch.name}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
     // ?f= is a format version that busts Jellyfin's probe cache when our stream format changes
     // Bump this number whenever the stream encoding pipeline changes (e.g., passthrough → GPU transcode)

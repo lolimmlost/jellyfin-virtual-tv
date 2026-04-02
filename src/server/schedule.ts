@@ -91,6 +91,12 @@ export function getAllChannels(): Channel[] {
   return rows.map(rowToChannel);
 }
 
+// Get the first slot in the schedule (for channel logo fallback)
+export async function getFirstSlot(channel: Channel): Promise<ScheduleSlot | null> {
+  const schedule = await getSchedule(channel);
+  return schedule[0] || null;
+}
+
 // Get the schedule slot that should be playing right now
 export async function getCurrentSlot(channel: Channel): Promise<{ slot: ScheduleSlot; offsetSeconds: number } | null> {
   const schedule = await getSchedule(channel);
