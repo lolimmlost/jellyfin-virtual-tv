@@ -141,48 +141,43 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   }
 
   // Build concat demuxer playlist file
-  // Use -ss for the first item's offset (fast keyframe seek) instead of concat inpoint
-  // which is too slow for HEVC over HTTP and causes video stalls
+  // Request transcoded H264+AAC from Jellyfin (GPU-accelerated) instead of raw static files
+  // This offloads HEVC decoding to Jellyfin's GPU and ensures consistent H264 output
   const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
   const concatFile = join(tempDir, "playlist.txt");
   const firstOffset = slots[0]?.offsetSeconds || 0;
 
+  const lang = channel.audioLanguage || "eng";
+
   let concatContent = "";
   for (let i = 0; i < slots.length; i++) {
-    const { slot } = slots[i];
-    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream?static=true&api_key=${apiKey}`;
-    concatContent += `file '${streamUrl}'\n`;
-    // Skip inpoint for first item — handled by -ss input seek
-    // Keep inpoint for subsequent items (they start from beginning anyway)
-    if (i > 0 && slots[i].offsetSeconds > 0) {
-      concatContent += `inpoint ${slots[i].offsetSeconds}\n`;
+    const { slot, offsetSeconds } = slots[i];
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      VideoCodec: "h264",
+      AudioCodec: "aac",
+      AudioChannels: "2",
+      MaxStreamingBitrate: "8000000",
+      AudioBitRate: "192000",
+      AudioStreamIndex: "0",
+    });
+    // Use StartTimeTicks for seeking (handled server-side by Jellyfin)
+    if (i === 0 && offsetSeconds > 0) {
+      params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
     }
+    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream.ts?${params.toString()}`;
+    concatContent += `file '${streamUrl}'\n`;
   }
   writeFileSync(concatFile, concatContent);
 
-  const lang = channel.audioLanguage || "eng";
-
-  // Select preferred audio language, fall back to first audio stream if no match
-  const mapArgs = ["-map", "0:v:0", "-map", `0:a:m:language:${lang}?`, "-map", "0:a:0?"];
-
-  const codecArgs = channel.streamMode === "copy"
-    ? ["-c", "copy"]
-    : ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "23",
-       "-force_key_frames", "expr:gte(t,n_forced*2)",
-       "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
-
-  // Use -ss before input for fast keyframe-based seeking on first item
-  const seekArgs = firstOffset > 0 ? ["-ss", String(firstOffset)] : [];
-
+  // Jellyfin transcodes to H264+AAC — we just copy and remux to MPEG-TS
   const ffmpegArgs = [
     "-fflags", "+igndts+genpts",
-    ...seekArgs,
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
     "-i", concatFile,
-    ...mapArgs,
-    ...codecArgs,
+    "-c", "copy",
     "-f", "mpegts",
     "-mpegts_flags", "resend_headers",
     "-flush_packets", "1",
