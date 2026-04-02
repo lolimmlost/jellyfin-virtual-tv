@@ -54,7 +54,7 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
     m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${ch.name}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
     // ?f= is a format version that busts Jellyfin's probe cache when our stream format changes
     // Bump this number whenever the stream encoding pipeline changes (e.g., passthrough → GPU transcode)
-    m3u += `${baseUrl}/iptv/stream/${ch.id}.ts?f=2\n\n`;
+    m3u += `${baseUrl}/iptv/stream/${ch.id}.ts?f=3\n\n`;
   }
 
   res.setHeader("Content-Type", "audio/x-mpegurl");
@@ -182,8 +182,10 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   // Jellyfin transcodes to H264+AAC — we just copy and remux to MPEG-TS
   // Explicit -map + codec tags ensure the output PMT declares H264/AAC correctly
   // even if the input TS metadata is ambiguous during concat transitions
+  // dump_extra re-injects SPS/PPS at every keyframe so downstream decoders can
+  // join mid-stream or survive concat transitions without "non-existing PPS" errors
   const ffmpegArgs = [
-    "-fflags", "+igndts+genpts",
+    "-fflags", "+genpts+discardcorrupt",
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
@@ -194,6 +196,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     "-map", "0:a:0",
     "-c:v", "copy",
     "-c:a", "copy",
+    "-bsf:v", "dump_extra=freq=keyframe",
     "-tag:v", "avc1",
     "-f", "mpegts",
     "-mpegts_flags", "resend_headers",
