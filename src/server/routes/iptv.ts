@@ -144,8 +144,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
 
   const lang = channel.audioLanguage || "eng";
 
-  // Select preferred audio language via metadata-based mapping
-  // Falls back to default stream selection if preferred language not found
+  // Select preferred audio language, fall back to first audio stream if no match
   const mapArgs = ["-map", "0:v:0", "-map", `0:a:m:language:${lang}?`, "-map", "0:a:0?"];
 
   const codecArgs = channel.streamMode === "copy"
@@ -155,8 +154,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
        "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
 
   const ffmpegArgs = [
-    "-analyzeduration", "10000000",
-    "-probesize", "10000000",
+    "-fflags", "+nobuffer+igndts+genpts",
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
@@ -165,7 +163,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     ...codecArgs,
     "-f", "mpegts",
     "-mpegts_flags", "resend_headers",
-    "-fflags", "+genpts",
+    "-flush_packets", "1",
     "pipe:1",
   ];
 
