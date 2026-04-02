@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -7,6 +7,21 @@ import { getAllChannels, getSchedule, getCurrentSlot, getRemainingSlots } from "
 import type { Channel } from "../../shared/types.js";
 
 export const iptvRouter = Router();
+
+// Debug endpoint — check ffmpeg capabilities
+iptvRouter.get("/debug/ffmpeg", (_req, res) => {
+  try {
+    const version = execSync("ffmpeg -version 2>&1").toString().split("\n")[0];
+    const decoders = execSync("ffmpeg -decoders 2>/dev/null").toString();
+    const encoders = execSync("ffmpeg -encoders 2>/dev/null").toString();
+    const hevcDec = decoders.split("\n").filter(l => /hevc|h265/i.test(l));
+    const h264Dec = decoders.split("\n").filter(l => /h264|h\.264/i.test(l));
+    const h264Enc = encoders.split("\n").filter(l => /libx264/i.test(l));
+    res.json({ version, hevcDecoders: hevcDec, h264Decoders: h264Dec, h264Encoders: h264Enc });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
 
 function findChannel(req: Request, res: Response): Channel | null {
   // Strip .ts extension if present (used in M3U URLs for Jellyfin format detection)
@@ -154,7 +169,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
        "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
 
   const ffmpegArgs = [
-    "-fflags", "+nobuffer+igndts+genpts",
+    "-fflags", "+igndts+genpts",
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
@@ -183,11 +198,20 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     }
   });
 
-  ffmpeg.stderr.on("data", () => {
-    // Consume stderr to prevent buffer overflow
+  let stderrBuf = "";
+  ffmpeg.stderr.on("data", (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+    // Log first 2000 chars of stderr for debugging, then just consume
+    if (stderrBuf.length <= 2000) {
+      // Will be logged on close
+    }
   });
 
-  ffmpeg.on("close", () => {
+  ffmpeg.on("close", (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[stream] ffmpeg exited with code ${code} for channel ${channel.name}`);
+      console.error(`[stream] ffmpeg stderr: ${stderrBuf.slice(0, 2000)}`);
+    }
     // Clean up temp concat file
     try { unlinkSync(concatFile); } catch {}
     try { unlinkSync(tempDir); } catch {}
