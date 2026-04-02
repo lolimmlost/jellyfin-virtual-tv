@@ -155,6 +155,8 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
        "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
 
   const ffmpegArgs = [
+    "-analyzeduration", "10000000",
+    "-probesize", "10000000",
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
