@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { spawn } from "child_process";
 import { getAllChannels, getSchedule, getCurrentSlot } from "../schedule.js";
 
 export const iptvRouter = Router();
@@ -120,52 +121,44 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  // Proxy the stream from Jellyfin instead of redirecting
-  try {
-    const startTicks = current.offsetSeconds * 10_000_000;
-    const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?StartTimeTicks=${startTicks}&Container=ts&api_key=${apiKey}`;
-    const upstream = await fetch(streamUrl);
+  // Use ffmpeg to seek into the Jellyfin stream and output MPEG-TS
+  const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?static=true&api_key=${apiKey}`;
 
-    if (!upstream.ok) {
-      res.status(upstream.status).json({ error: "Upstream stream failed" });
-      return;
-    }
+  const ffmpegArgs = [
+    "-ss", String(current.offsetSeconds),
+    "-i", streamUrl,
+    "-c", "copy",
+    "-f", "mpegts",
+    "-fflags", "+genpts",
+    "pipe:1",
+  ];
 
-    // Forward content type and pipe the body
-    const contentType = upstream.headers.get("content-type") || "video/mp2t";
-    res.setHeader("Content-Type", contentType);
+  const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
-    // Don't forward content-length — we may not serve the full file
-    // Mark as infinite/live stream
-    res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("Content-Type", "video/mp2t");
+  res.setHeader("Transfer-Encoding", "chunked");
 
-    const reader = upstream.body?.getReader();
-    if (!reader) {
-      res.status(503).json({ error: "No stream body" });
-      return;
-    }
+  ffmpeg.stdout.pipe(res);
 
-    req.on("close", () => {
-      reader.cancel();
-    });
+  ffmpeg.stderr.on("data", () => {
+    // Consume stderr to prevent buffer overflow, but don't log
+  });
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.writableEnded) {
-        res.write(Buffer.from(value));
-      } else {
-        reader.cancel();
-        break;
-      }
-    }
-
-    if (!res.writableEnded) res.end();
-  } catch (err) {
+  ffmpeg.on("error", (err) => {
     if (!res.headersSent) {
       res.status(503).json({ error: "Stream failed" });
     }
-  }
+  });
+
+  ffmpeg.on("close", () => {
+    if (!res.writableEnded) res.end();
+  });
+
+  req.on("close", () => {
+    ffmpeg.kill("SIGTERM");
+  });
 });
 
 // Format date as XMLTV format: "20260401120000 +0000"
