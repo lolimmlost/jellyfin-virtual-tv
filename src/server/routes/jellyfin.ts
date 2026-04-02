@@ -65,6 +65,31 @@ jellyfinRouter.get("/libraries", async (_req, res) => {
   }
 });
 
+jellyfinRouter.get("/genres", async (_req, res) => {
+  if (!JELLYFIN_URL || !JELLYFIN_API_KEY) {
+    res.status(500).json({ error: "JELLYFIN_URL and JELLYFIN_API_KEY must be set" });
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${JELLYFIN_URL}/Genres?sortBy=SortName&sortOrder=Ascending`,
+      { headers: authHeaders },
+    );
+    if (!response.ok) {
+      res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
+      return;
+    }
+    const data = await response.json();
+    const genres: string[] = data.Items.map((g: { Name: string }) => g.Name);
+    res.json({ genres });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Failed to fetch genres",
+    });
+  }
+});
+
 jellyfinRouter.get("/items", async (req, res) => {
   if (!JELLYFIN_URL || !JELLYFIN_API_KEY) {
     res.status(500).json({ error: "JELLYFIN_URL and JELLYFIN_API_KEY must be set" });

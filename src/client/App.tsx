@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { Channel, ChannelFilter, JellyfinLibrary } from "../shared/types";
+import type { Channel, ChannelFilter, JellyfinLibrary, ScheduleSlot } from "../shared/types";
 
 // ── Neo-Brutalism Dark ──────────────────────────────────────────
 
@@ -49,6 +49,31 @@ const buttonStyle: React.CSSProperties = {
   boxShadow: `3px 3px 0px 0px ${c.border}`,
   transition: "transform 0.1s, box-shadow 0.1s",
 };
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function formatDuration(ticks: number): string {
+  const mins = Math.round(ticks / 10_000_000 / 60);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatDateHeader(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
 
 // ── Main App ────────────────────────────────────────────────────
 
@@ -272,6 +297,153 @@ export default function App() {
   );
 }
 
+// ── Now Playing ────────────────────────────────────────────────
+
+function NowPlaying({ channelId }: { channelId: string }) {
+  const [nowData, setNowData] = useState<{
+    channel: string;
+    nowPlaying: string | null;
+    offsetSeconds?: number;
+    startTime?: string;
+    endTime?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch(`/iptv/now/${channelId}`)
+      .then((r) => r.json())
+      .then(setNowData)
+      .catch(() => setNowData(null));
+  }, [channelId]);
+
+  if (!nowData || !nowData.nowPlaying) {
+    return (
+      <div style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.border}40`, fontSize: 13, color: c.textDim, fontWeight: 700 }}>
+        Nothing currently playing
+      </div>
+    );
+  }
+
+  const elapsed = nowData.offsetSeconds || 0;
+  const total = nowData.startTime && nowData.endTime
+    ? (new Date(nowData.endTime).getTime() - new Date(nowData.startTime).getTime()) / 1000
+    : 0;
+  const progress = total > 0 ? Math.min((elapsed / total) * 100, 100) : 0;
+
+  return (
+    <div style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.accent}60` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{
+          background: c.danger, color: c.black, fontSize: 10, fontWeight: 800,
+          padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.1em",
+        }}>LIVE</span>
+        <span style={{ fontSize: 16, fontWeight: 800 }}>{nowData.nowPlaying}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: c.textDim, fontWeight: 700 }}>
+        <span>{formatTime(nowData.startTime!)}</span>
+        <div style={{ flex: 1, height: 4, background: c.bg, position: "relative" }}>
+          <div style={{ width: `${progress}%`, height: "100%", background: c.accent, transition: "width 1s" }} />
+        </div>
+        <span>{formatTime(nowData.endTime!)}</span>
+      </div>
+      <div style={{ fontSize: 11, color: c.textDim, marginTop: 6, fontWeight: 700 }}>
+        {Math.floor(elapsed / 60)}m elapsed / {Math.floor((total - elapsed) / 60)}m remaining
+      </div>
+    </div>
+  );
+}
+
+// ── Schedule Guide ─────────────────────────────────────────────
+
+function ScheduleGuide({ channelId, maxSlots }: { channelId: string; maxSlots?: number }) {
+  const [slots, setSlots] = useState<ScheduleSlot[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/iptv/schedule/${channelId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setSlots(data.slots || []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [channelId]);
+
+  if (loading) {
+    return <div style={{ color: c.textDim, fontSize: 13, fontWeight: 700, padding: 16 }}>Loading schedule...</div>;
+  }
+
+  if (slots.length === 0) {
+    return <div style={{ color: c.textDim, fontSize: 13, fontWeight: 700, padding: 16 }}>No content scheduled</div>;
+  }
+
+  const now = Date.now();
+  const displaySlots = maxSlots ? slots.slice(0, maxSlots) : slots;
+
+  // Group by date
+  const groups: { date: string; slots: ScheduleSlot[] }[] = [];
+  for (const slot of displaySlots) {
+    const dateKey = new Date(slot.startTime).toDateString();
+    const last = groups[groups.length - 1];
+    if (last && last.date === dateKey) {
+      last.slots.push(slot);
+    } else {
+      groups.push({ date: dateKey, slots: [slot] });
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {groups.map((group) => (
+        <div key={group.date}>
+          <div style={{
+            fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.15em",
+            color: c.yellow, padding: "10px 0 6px", borderBottom: `1px solid ${c.border}20`,
+          }}>
+            {formatDateHeader(group.slots[0].startTime)}
+          </div>
+          {group.slots.map((slot, i) => {
+            const isCurrent = now >= new Date(slot.startTime).getTime() && now < new Date(slot.endTime).getTime();
+            return (
+              <div key={`${slot.itemId}-${i}`} style={{
+                display: "flex", gap: 12, padding: "8px 0",
+                borderBottom: `1px solid ${c.border}10`,
+                opacity: new Date(slot.endTime).getTime() < now ? 0.4 : 1,
+              }}>
+                {slot.imageUrl && (
+                  <img
+                    src={slot.imageUrl}
+                    alt=""
+                    style={{ width: 64, height: 36, objectFit: "cover", border: `2px solid ${isCurrent ? c.accent : c.border}40`, flexShrink: 0 }}
+                  />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {isCurrent && (
+                      <span style={{
+                        background: c.accent, color: c.black, fontSize: 9, fontWeight: 800,
+                        padding: "1px 5px", textTransform: "uppercase", flexShrink: 0,
+                      }}>NOW</span>
+                    )}
+                    <span style={{
+                      fontSize: 13, fontWeight: 700,
+                      color: isCurrent ? c.text : c.text,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>{slot.title}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: c.textDim, fontWeight: 700, marginTop: 2 }}>
+                    {formatTime(slot.startTime)} - {formatTime(slot.endTime)} · {formatDuration(slot.durationTicks)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Channel Detail ──────────────────────────────────────────────
 
 function ChannelDetail({ channel, onEdit, onDelete }: {
@@ -309,8 +481,16 @@ function ChannelDetail({ channel, onEdit, onDelete }: {
         </div>
       </div>
 
+      <Section title="Now Playing">
+        <NowPlaying channelId={channel.id} />
+      </Section>
+
       <Section title="Filters">
         <FilterSummary filters={channel.filters} />
+      </Section>
+
+      <Section title="Schedule">
+        <ScheduleGuide channelId={channel.id} />
       </Section>
     </div>
   );
@@ -336,95 +516,116 @@ function ChannelEditor({ channel, onSave, onCancel }: {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800 }}>Edit Channel</h2>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button type="button" onClick={onCancel} style={{
-            ...buttonStyle, background: c.surface, color: c.text,
+    <div style={{ display: "flex", gap: 24 }}>
+      {/* Editor form */}
+      <form onSubmit={handleSubmit} style={{ flex: 1 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800 }}>Edit Channel</h2>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={onCancel} style={{
+              ...buttonStyle, background: c.surface, color: c.text,
+            }}>
+              Cancel
+            </button>
+            <button type="submit" style={{ ...buttonStyle, background: c.accent, color: c.black }}>
+              Save
+            </button>
+          </div>
+        </div>
+
+        <Section title="General">
+          <Field label="Name">
+            <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} placeholder="e.g. Cartoon Network" />
+          </Field>
+          <Field label="Channel Number">
+            <input type="number" value={number} onChange={(e) => setNumber(parseInt(e.target.value, 10) || 1)} style={{ ...inputStyle, width: 100 }} min={1} />
+          </Field>
+          <Field label="Shuffle Mode">
+            <div style={{ display: "flex", gap: 8 }}>
+              {(["random", "sequential"] as const).map((mode) => (
+                <button key={mode} type="button" onClick={() => setShuffleMode(mode)} style={{
+                  ...buttonStyle,
+                  background: shuffleMode === mode ? c.accent : c.surface,
+                  color: shuffleMode === mode ? c.black : c.text,
+                  padding: "8px 16px",
+                }}>
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Stream Mode">
+            <div style={{ display: "flex", gap: 8 }}>
+              {([["transcode", "Transcode"], ["copy", "Passthrough"]] as const).map(([mode, label]) => (
+                <button key={mode} type="button" onClick={() => setStreamMode(mode)} style={{
+                  ...buttonStyle,
+                  background: streamMode === mode ? c.accent : c.surface,
+                  color: streamMode === mode ? c.black : c.text,
+                  padding: "8px 16px",
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700 }}>
+              {streamMode === "transcode"
+                ? "Normalizes all media to H.264+AAC — smooth transitions between episodes with different formats"
+                : "Passes through original codecs — lower CPU but may glitch if episodes have different codecs/resolutions"}
+            </span>
+          </Field>
+          <Field label="Audio Language">
+            <div style={{ display: "flex", gap: 8 }}>
+              {([["eng", "English"], ["jpn", "Japanese"], ["spa", "Spanish"]] as const).map(([code, label]) => (
+                <button key={code} type="button" onClick={() => setAudioLanguage(code)} style={{
+                  ...buttonStyle,
+                  background: audioLanguage === code ? c.accent : c.surface,
+                  color: audioLanguage === code ? c.black : c.text,
+                  padding: "8px 16px",
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <input
+                value={audioLanguage}
+                onChange={(e) => setAudioLanguage(e.target.value.toLowerCase())}
+                style={{ ...inputStyle, width: 120 }}
+                placeholder="ISO 639-2 code"
+              />
+            </div>
+            <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700 }}>
+              Preferred audio track language (ISO 639-2 code). Falls back to first available track if not found.
+            </span>
+          </Field>
+        </Section>
+
+        <Section title="Content Filters">
+          <p style={{ color: c.textDim, fontSize: 13, marginTop: 0, marginBottom: 16, fontWeight: 700 }}>
+            Define what media this channel pulls from Jellyfin. Leave empty to include everything.
+          </p>
+          <FilterEditor filters={filters} onChange={setFilters} />
+        </Section>
+      </form>
+
+      {/* Schedule preview sidebar */}
+      <div style={{ width: 340, flexShrink: 0 }}>
+        <div style={{
+          position: "sticky", top: 0,
+          background: c.surface, border: `4px solid ${c.border}`,
+          boxShadow: `6px 6px 0px 0px ${c.border}`, padding: 16,
+          maxHeight: "calc(100vh - 120px)", overflowY: "auto",
+        }}>
+          <h3 style={{
+            margin: "0 0 12px", fontSize: 13, textTransform: "uppercase",
+            letterSpacing: "0.15em", color: c.textDim, fontWeight: 800,
           }}>
-            Cancel
-          </button>
-          <button type="submit" style={{ ...buttonStyle, background: c.accent, color: c.black }}>
-            Save
-          </button>
+            48h Schedule Preview
+          </h3>
+          <ScheduleGuide channelId={channel.id} />
         </div>
       </div>
-
-      <Section title="General">
-        <Field label="Name">
-          <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} placeholder="e.g. Cartoon Network" />
-        </Field>
-        <Field label="Channel Number">
-          <input type="number" value={number} onChange={(e) => setNumber(parseInt(e.target.value, 10) || 1)} style={{ ...inputStyle, width: 100 }} min={1} />
-        </Field>
-        <Field label="Shuffle Mode">
-          <div style={{ display: "flex", gap: 8 }}>
-            {(["random", "sequential"] as const).map((mode) => (
-              <button key={mode} type="button" onClick={() => setShuffleMode(mode)} style={{
-                ...buttonStyle,
-                background: shuffleMode === mode ? c.accent : c.surface,
-                color: shuffleMode === mode ? c.black : c.text,
-                padding: "8px 16px",
-              }}>
-                {mode}
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label="Stream Mode">
-          <div style={{ display: "flex", gap: 8 }}>
-            {([["transcode", "Transcode"], ["copy", "Passthrough"]] as const).map(([mode, label]) => (
-              <button key={mode} type="button" onClick={() => setStreamMode(mode)} style={{
-                ...buttonStyle,
-                background: streamMode === mode ? c.accent : c.surface,
-                color: streamMode === mode ? c.black : c.text,
-                padding: "8px 16px",
-              }}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700 }}>
-            {streamMode === "transcode"
-              ? "Normalizes all media to H.264+AAC — smooth transitions between episodes with different formats"
-              : "Passes through original codecs — lower CPU but may glitch if episodes have different codecs/resolutions"}
-          </span>
-        </Field>
-        <Field label="Audio Language">
-          <div style={{ display: "flex", gap: 8 }}>
-            {([["eng", "English"], ["jpn", "Japanese"], ["spa", "Spanish"]] as const).map(([code, label]) => (
-              <button key={code} type="button" onClick={() => setAudioLanguage(code)} style={{
-                ...buttonStyle,
-                background: audioLanguage === code ? c.accent : c.surface,
-                color: audioLanguage === code ? c.black : c.text,
-                padding: "8px 16px",
-              }}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <input
-              value={audioLanguage}
-              onChange={(e) => setAudioLanguage(e.target.value.toLowerCase())}
-              style={{ ...inputStyle, width: 120 }}
-              placeholder="ISO 639-2 code"
-            />
-          </div>
-          <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700 }}>
-            Preferred audio track language (ISO 639-2 code). Falls back to first available track if not found.
-          </span>
-        </Field>
-      </Section>
-
-      <Section title="Content Filters">
-        <p style={{ color: c.textDim, fontSize: 13, marginTop: 0, marginBottom: 16, fontWeight: 700 }}>
-          Define what media this channel pulls from Jellyfin. Leave empty to include everything.
-        </p>
-        <FilterEditor filters={filters} onChange={setFilters} />
-      </Section>
-    </form>
+    </div>
   );
 }
 
@@ -435,11 +636,16 @@ function FilterEditor({ filters, onChange }: {
   onChange: (f: ChannelFilter) => void;
 }) {
   const [libraries, setLibraries] = useState<JellyfinLibrary[]>([]);
+  const [availableGenres, setAvailableGenres] = useState<string[]>([]);
 
   useEffect(() => {
     fetch("/api/jellyfin/libraries")
       .then((r) => r.json())
       .then((data) => setLibraries(data.libraries || []))
+      .catch(() => {});
+    fetch("/api/jellyfin/genres")
+      .then((r) => r.json())
+      .then((data) => setAvailableGenres(data.genres || []))
       .catch(() => {});
   }, []);
 
@@ -461,6 +667,14 @@ function FilterEditor({ filters, onChange }: {
       ? current.filter((t) => t !== type)
       : [...current, type];
     updateFilter("itemTypes", next.length > 0 ? next : undefined);
+  }
+
+  function toggleGenre(genre: string) {
+    const current = filters.genres || [];
+    const next = current.includes(genre)
+      ? current.filter((g) => g !== genre)
+      : [...current, genre];
+    updateFilter("genres", next.length > 0 ? next : undefined);
   }
 
   return (
@@ -511,10 +725,10 @@ function FilterEditor({ filters, onChange }: {
       </Field>
 
       <Field label="Genres">
-        <TagInput
-          values={filters.genres || []}
-          onChange={(v) => updateFilter("genres", v.length > 0 ? v : undefined)}
-          placeholder="Type a genre and press Enter"
+        <GenrePicker
+          availableGenres={availableGenres}
+          selectedGenres={filters.genres || []}
+          onToggle={toggleGenre}
         />
       </Field>
 
@@ -534,6 +748,82 @@ function FilterEditor({ filters, onChange }: {
           placeholder="e.g. Scream, Scary Movie, Tucker and Dale"
         />
       </Field>
+    </div>
+  );
+}
+
+// ── Genre Picker ───────────────────────────────────────────────
+
+function GenrePicker({ availableGenres, selectedGenres, onToggle }: {
+  availableGenres: string[];
+  selectedGenres: string[];
+  onToggle: (genre: string) => void;
+}) {
+  const [customInput, setCustomInput] = useState("");
+
+  function handleCustomKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const trimmed = customInput.trim();
+      if (trimmed && !selectedGenres.includes(trimmed)) {
+        onToggle(trimmed);
+      }
+      setCustomInput("");
+    }
+  }
+
+  return (
+    <div>
+      {/* Selected genres */}
+      {selectedGenres.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {selectedGenres.map((genre) => (
+            <span key={genre} style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              background: c.accent, color: c.black, padding: "2px 10px",
+              border: `2px solid ${c.border}`, fontSize: 12, fontWeight: 800,
+              fontFamily: font, textTransform: "uppercase",
+            }}>
+              {genre}
+              <span onClick={() => onToggle(genre)} style={{ cursor: "pointer", opacity: 0.7, marginLeft: 2, fontSize: 14 }}>x</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Available genres grid */}
+      {availableGenres.length > 0 && (
+        <div style={{
+          display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8,
+          maxHeight: 120, overflowY: "auto", padding: 4,
+          background: c.bg, border: `2px solid ${c.border}30`,
+        }}>
+          {availableGenres.map((genre) => {
+            const selected = selectedGenres.includes(genre);
+            return (
+              <button key={genre} type="button" onClick={() => onToggle(genre)} style={{
+                background: selected ? c.accent : "transparent",
+                color: selected ? c.black : c.textDim,
+                border: `1px solid ${selected ? c.accent : c.border}40`,
+                padding: "3px 10px", fontSize: 11, fontWeight: 700,
+                fontFamily: font, cursor: "pointer", borderRadius: 0,
+                transition: "all 0.1s",
+              }}>
+                {genre}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Custom genre input */}
+      <input
+        value={customInput}
+        onChange={(e) => setCustomInput(e.target.value)}
+        onKeyDown={handleCustomKeyDown}
+        style={{ ...inputStyle, fontSize: 12 }}
+        placeholder="Or type a custom genre and press Enter"
+      />
     </div>
   );
 }
@@ -576,7 +866,7 @@ function TagInput({ values, onChange, placeholder }: {
             fontFamily: font, textTransform: "uppercase",
           }}>
             {tag}
-            <span onClick={() => removeTag(tag)} style={{ cursor: "pointer", opacity: 0.7, marginLeft: 2, fontSize: 14 }}>×</span>
+            <span onClick={() => removeTag(tag)} style={{ cursor: "pointer", opacity: 0.7, marginLeft: 2, fontSize: 14 }}>x</span>
           </span>
         ))}
       </div>
