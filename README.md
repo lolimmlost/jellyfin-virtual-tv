@@ -9,10 +9,13 @@ Virtual live TV channels from your Jellyfin media library. Turn your media colle
 - **Virtual Channels** — Create themed channels (Cartoons, Sci-Fi, Action, etc.) from your existing Jellyfin libraries
 - **EPG Guide** — Full XMLTV electronic program guide with thumbnails, integrated directly into Jellyfin's Live TV
 - **M3U Tuner** — Standard IPTV tuner format, works natively with Jellyfin Live TV
-- **Smart Filtering** — Filter content by library, genre, tags, item type (Movies/Episodes), or title match
-- **24-Hour Scheduling** — Deterministic daily schedules with random or sequential shuffle modes
+- **Smart Filtering** — Filter content by library, genre, tags, item type (Movies/Episodes), or comma-separated title match
+- **Genre Picker** — Autocomplete genre selection pulled directly from your Jellyfin library, with custom genre support
+- **48-Hour Scheduling** — Deterministic schedules covering all timezones, with random or sequential shuffle modes, regenerated hourly
 - **GPU Transcoding** — Offloads HEVC/H264 transcoding to Jellyfin's GPU for seamless mixed-codec playback
-- **Channel Management UI** — React-based web interface with now-playing, 48h schedule preview, and genre picker
+- **Audio Language** — Per-channel preferred audio track (English, Japanese, Spanish, or any ISO 639-2 code)
+- **Stream Modes** — Transcode (H.264+AAC, handles mixed codecs) or Passthrough (original codecs, lower CPU)
+- **Channel Management UI** — React-based web interface with now-playing status, live 48h schedule preview, and real-time editing
 - **Docker Ready** — Multi-stage Docker build, deploys easily with Coolify or any Docker host
 
 ## Screenshots
@@ -95,13 +98,19 @@ In Jellyfin, go to **Dashboard > Live TV**:
 
 ### 4. Create channels
 
-Open the web UI at `http://your-host:3336` and create your channels. Each channel can filter content by:
+Open the web UI at `http://your-host:3336` and create your channels. Each channel can be configured with:
 
+**Content Filters:**
 - **Libraries** — Pick which Jellyfin libraries to pull from
 - **Item Types** — Movies, Episodes, or both
-- **Genres** — Action, Comedy, Sci-Fi, etc.
+- **Genres** — Select from your Jellyfin library's genres via the genre picker, or type custom genres
 - **Tags** — Any Jellyfin tags you've set up
-- **Title Match** — Search by series/movie name (e.g., "SpongeBob")
+- **Title Match** — Comma-separated series/movie names (e.g., "SpongeBob, Simpsons, Futurama")
+
+**Playback Settings:**
+- **Shuffle Mode** — Random (different order daily) or Sequential (plays in series order)
+- **Stream Mode** — Transcode (normalizes to H.264+AAC for mixed-codec libraries) or Passthrough (original codecs)
+- **Audio Language** — Preferred audio track language per channel (e.g., Japanese for anime channels)
 
 After creating channels, refresh the guide data in Jellyfin to see them in the Live TV guide.
 
@@ -141,6 +150,7 @@ This starts both the Express API server (port 3000) and the Vite dev server (por
 |----------|-------------|
 | `GET /api/jellyfin/status` | Connection status |
 | `GET /api/jellyfin/libraries` | List libraries |
+| `GET /api/jellyfin/genres` | List all genres |
 | `GET /api/jellyfin/items` | Query items |
 
 ## Environment Variables
@@ -156,11 +166,11 @@ This starts both the Express API server (port 3000) and the Vite dev server (por
 
 ## How It Works
 
-1. **Channels** are configured with content filters (genre, library, title match, etc.)
-2. The **schedule engine** fetches matching items from Jellyfin and builds a deterministic 24-hour playlist per channel, regenerated hourly
+1. **Channels** are configured with content filters (genre, library, title match, etc.) and playback settings (shuffle mode, stream mode, audio language)
+2. The **schedule engine** fetches matching items from Jellyfin and builds a deterministic 48-hour playlist per channel, regenerated hourly
 3. The **M3U endpoint** lists channels for Jellyfin's IPTV tuner
 4. The **XMLTV endpoint** provides the full programme guide with titles and thumbnails
-5. When a client tunes in, the **stream proxy** calculates the current position in the schedule and streams the correct media file from Jellyfin
+5. When a client tunes in, the **stream proxy** requests transcoded H.264+AAC from Jellyfin's GPU (or passthrough if configured), chains episodes via ffmpeg concat demuxer, and streams continuous MPEG-TS to the client
 
 ## Project Structure
 
@@ -231,6 +241,16 @@ This happens when Jellyfin's cached EPG is from a previous schedule generation. 
 ### Video freezes at episode boundaries
 
 Set the channel's stream mode to **Transcode** (the default). Passthrough (`copy`) mode requires all files in the channel to have identical codecs, resolution, and audio format. Mixed-codec libraries need transcoding for seamless playback.
+
+### HEVC content fails to play (FFmpeg exit code 234)
+
+Jellyfin caches codec probe results per channel. If you changed the stream pipeline (e.g., enabled GPU transcoding), Jellyfin may still have stale HEVC probe data cached. Signs: probe takes <1ms instead of 3-4 seconds, codec shows "hevc" despite transcoding to H264.
+
+**Fix:** The app includes a cache-busting version parameter (`?f=2`) in M3U stream URLs. If you hit this issue, bump the version in `src/server/routes/iptv.ts`, redeploy, and refresh the M3U tuner in Jellyfin Dashboard > Live TV.
+
+### Wrong audio language
+
+Each channel has an **Audio Language** setting (default: English). For anime channels, set this to Japanese (`jpn`). The setting uses ISO 639-2 language codes. If the preferred language isn't found, Jellyfin falls back to the first available audio track.
 
 ## License
 
