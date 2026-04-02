@@ -374,10 +374,25 @@ function ScheduleGuide({ channelId, maxSlots, compact }: { channelId: string; ma
       .catch(() => setLoading(false));
   }, [channelId]);
 
-  // Auto-scroll to "now playing" once slots load
+  // Auto-scroll to "now playing" within the schedule's scroll container (not the page)
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!loading && nowRef.current) {
-      nowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Find the nearest scrollable ancestor
+      const item = nowRef.current;
+      const container = scrollContainerRef.current;
+      if (container) {
+        // For non-compact: container itself scrolls
+        // For compact: walk up to the scrollable parent (sticky sidebar)
+        const scroller = container.scrollHeight > container.clientHeight
+          ? container
+          : container.closest<HTMLElement>("[data-scroll-container]") || container.parentElement;
+        if (scroller) {
+          const itemRect = item.getBoundingClientRect();
+          const scrollerRect = scroller.getBoundingClientRect();
+          scroller.scrollTop += itemRect.top - scrollerRect.top;
+        }
+      }
     }
   }, [loading, slots]);
 
@@ -406,7 +421,7 @@ function ScheduleGuide({ channelId, maxSlots, compact }: { channelId: string; ma
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+    <div ref={scrollContainerRef} style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: compact ? undefined : 600, overflowY: compact ? undefined : "auto", position: "relative" }}>
       {groups.map((group) => (
         <div key={group.date}>
           <div style={{
@@ -647,7 +662,7 @@ function ChannelEditor({ channel, onSave, onCancel }: {
 
       {/* Schedule preview sidebar */}
       <div style={{ width: 340, flexShrink: 0 }}>
-        <div style={{
+        <div data-scroll-container style={{
           position: "sticky", top: 0,
           background: c.surface, border: `4px solid ${c.border}`,
           boxShadow: `6px 6px 0px 0px ${c.border}`, padding: 16,
