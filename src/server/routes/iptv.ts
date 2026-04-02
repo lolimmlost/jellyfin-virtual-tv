@@ -141,15 +141,21 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   }
 
   // Build concat demuxer playlist file
+  // Use -ss for the first item's offset (fast keyframe seek) instead of concat inpoint
+  // which is too slow for HEVC over HTTP and causes video stalls
   const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
   const concatFile = join(tempDir, "playlist.txt");
+  const firstOffset = slots[0]?.offsetSeconds || 0;
 
   let concatContent = "";
-  for (const { slot, offsetSeconds } of slots) {
+  for (let i = 0; i < slots.length; i++) {
+    const { slot } = slots[i];
     const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream?static=true&api_key=${apiKey}`;
     concatContent += `file '${streamUrl}'\n`;
-    if (offsetSeconds > 0) {
-      concatContent += `inpoint ${offsetSeconds}\n`;
+    // Skip inpoint for first item — handled by -ss input seek
+    // Keep inpoint for subsequent items (they start from beginning anyway)
+    if (i > 0 && slots[i].offsetSeconds > 0) {
+      concatContent += `inpoint ${slots[i].offsetSeconds}\n`;
     }
   }
   writeFileSync(concatFile, concatContent);
@@ -165,8 +171,12 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
        "-force_key_frames", "expr:gte(t,n_forced*2)",
        "-c:a", "aac", "-ac", "2", "-b:a", "192k"];
 
+  // Use -ss before input for fast keyframe-based seeking on first item
+  const seekArgs = firstOffset > 0 ? ["-ss", String(firstOffset)] : [];
+
   const ffmpegArgs = [
     "-fflags", "+igndts+genpts",
+    ...seekArgs,
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
