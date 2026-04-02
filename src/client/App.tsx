@@ -60,7 +60,7 @@ export default function App() {
 
   const selectedChannel = channels.find((c) => c.id === selectedId) || null;
 
-  // Load font
+  // Load font + neon animation
   useEffect(() => {
     if (!document.getElementById("font-space-grotesk")) {
       const link = document.createElement("link");
@@ -68,6 +68,27 @@ export default function App() {
       link.rel = "stylesheet";
       link.href = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;800&display=swap";
       document.head.appendChild(link);
+    }
+    if (!document.getElementById("neon-keyframes")) {
+      const style = document.createElement("style");
+      style.id = "neon-keyframes";
+      style.textContent = `
+        @keyframes neonFlicker {
+          0%, 100% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+          18% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+          20% { text-shadow: none; opacity: 0.6; }
+          22% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+          55% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+          57% { text-shadow: none; opacity: 0.5; }
+          58% { text-shadow: 0 0 2px #FFD93D, 0 0 6px #FFD93D; opacity: 0.8; }
+          60% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+        }
+        @keyframes neonPulse {
+          0%, 100% { text-shadow: 0 0 4px #FF6B6B, 0 0 10px #FF6B6B, 0 0 20px #FF6B6B, 0 0 40px #FF6B6B; }
+          50% { text-shadow: 0 0 2px #FF6B6B, 0 0 5px #FF6B6B, 0 0 10px #FF6B6B; }
+        }
+      `;
+      document.head.appendChild(style);
     }
   }, []);
 
@@ -148,17 +169,21 @@ export default function App() {
         display: "flex", justifyContent: "space-between", alignItems: "center",
         padding: "16px 24px", borderBottom: `4px solid ${c.border}`, background: c.bg,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <h1 style={{
             margin: 0, fontSize: 24, fontWeight: 800, color: c.text, fontFamily: font,
             background: c.accent, padding: "4px 14px", border: `4px solid ${c.border}`, lineHeight: 1.3,
+            animation: "neonPulse 3s ease-in-out infinite",
           }}>Virtual TV</h1>
           <span style={{
             fontSize: 10, fontWeight: 800, fontFamily: font, color: c.textDim,
             textTransform: "uppercase", letterSpacing: "0.15em", lineHeight: 1,
           }}>
             <span style={{ display: "block", fontSize: 9, letterSpacing: "0.2em", opacity: 0.6 }}>styled by</span>
-            <span style={{ color: c.yellow, fontSize: 13, letterSpacing: "0.1em" }}>appahouse</span>
+            <span style={{
+              color: c.yellow, fontSize: 13, letterSpacing: "0.1em",
+              animation: "neonFlicker 4s ease-in-out infinite",
+            }}>appahouse</span>
           </span>
         </div>
         <StatusPill status={status} />
