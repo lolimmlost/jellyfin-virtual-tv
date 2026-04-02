@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { spawn } from "child_process";
-import { getAllChannels, getSchedule, getCurrentSlot } from "../schedule.js";
+import { spawn, type ChildProcess } from "child_process";
+import { getAllChannels, getSchedule, getCurrentSlot, getRemainingSlots } from "../schedule.js";
 
 export const iptvRouter = Router();
 
@@ -99,7 +99,7 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
   });
 });
 
-// Stream endpoint — proxy the Jellyfin stream directly instead of redirecting
+// Stream endpoint — continuously chains episodes for seamless live TV
 iptvRouter.get("/stream/:channelId", async (req, res) => {
   const channels = getAllChannels();
   const channel = channels.find((c) => c.id === req.params.channelId);
@@ -108,8 +108,8 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  const current = await getCurrentSlot(channel);
-  if (!current) {
+  const slots = await getRemainingSlots(channel);
+  if (slots.length === 0) {
     res.status(503).json({ error: "No content scheduled" });
     return;
   }
@@ -121,44 +121,59 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  // Use ffmpeg to seek into the Jellyfin stream and output MPEG-TS
-  const streamUrl = `${jellyfinUrl}/Videos/${current.slot.itemId}/stream?static=true&api_key=${apiKey}`;
-
-  const ffmpegArgs = [
-    "-ss", String(current.offsetSeconds),
-    "-i", streamUrl,
-    "-c", "copy",
-    "-f", "matroska",
-    "-fflags", "+genpts",
-    "pipe:1",
-  ];
-
-  const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
   res.setHeader("Content-Type", "video/x-matroska");
   res.setHeader("Transfer-Encoding", "chunked");
 
-  ffmpeg.stdout.pipe(res);
-
-  ffmpeg.stderr.on("data", () => {
-    // Consume stderr to prevent buffer overflow, but don't log
-  });
-
-  ffmpeg.on("error", (err) => {
-    if (!res.headersSent) {
-      res.status(503).json({ error: "Stream failed" });
-    }
-  });
-
-  ffmpeg.on("close", () => {
-    if (!res.writableEnded) res.end();
-  });
+  let cancelled = false;
+  let currentFfmpeg: ChildProcess | null = null;
 
   req.on("close", () => {
-    ffmpeg.kill("SIGTERM");
+    cancelled = true;
+    if (currentFfmpeg) currentFfmpeg.kill("SIGTERM");
   });
+
+  for (let i = 0; i < slots.length; i++) {
+    if (cancelled || res.writableEnded) break;
+
+    const { slot, offsetSeconds } = slots[i];
+    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream?static=true&api_key=${apiKey}`;
+
+    const ffmpegArgs = [
+      "-ss", String(offsetSeconds),
+      "-i", streamUrl,
+      "-c", "copy",
+      "-f", "matroska",
+      "-fflags", "+genpts",
+      "pipe:1",
+    ];
+
+    await new Promise<void>((resolve) => {
+      const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      currentFfmpeg = ffmpeg;
+
+      ffmpeg.stdout.on("data", (chunk: Buffer) => {
+        if (!res.writableEnded) {
+          res.write(chunk);
+        } else {
+          ffmpeg.kill("SIGTERM");
+        }
+      });
+
+      ffmpeg.stderr.on("data", () => {
+        // Consume stderr to prevent buffer overflow
+      });
+
+      ffmpeg.on("error", () => resolve());
+      ffmpeg.on("close", () => {
+        currentFfmpeg = null;
+        resolve();
+      });
+    });
+  }
+
+  if (!res.writableEnded) res.end();
 });
 
 // Format date as XMLTV format: "20260401120000 +0000"
