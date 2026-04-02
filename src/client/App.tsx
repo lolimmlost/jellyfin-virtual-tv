@@ -483,7 +483,7 @@ function FilterEditor({ filters, onChange }: {
           value={filters.titleMatch || ""}
           onChange={(e) => updateFilter("titleMatch", e.target.value || undefined)}
           style={inputStyle}
-          placeholder="Substring match (e.g. Star Wars)"
+          placeholder="e.g. Scream, Scary Movie, Tucker and Dale"
         />
       </Field>
     </div>

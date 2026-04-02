@@ -47,56 +47,59 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
 }
 
 async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<JellyfinItem[]> {
-  const search = filter.titleMatch!;
+  // Support comma-separated title matches (e.g. "scream, scary movie, tucker and dale")
+  const searchTerms = filter.titleMatch!.split(",").map((s) => s.trim()).filter(Boolean);
   const wantEpisodes = !filter.itemTypes?.length || filter.itemTypes.includes("Episode");
   const wantMovies = !filter.itemTypes?.length || filter.itemTypes.includes("Movie");
 
   const allItems: JellyfinItem[] = [];
 
-  // Search for series matching the title, then get their episodes
-  if (wantEpisodes) {
-    const seriesParams = new URLSearchParams();
-    seriesParams.set("recursive", "true");
-    seriesParams.set("includeItemTypes", "Series");
-    seriesParams.set("searchTerm", search);
-    seriesParams.set("limit", "10");
+  for (const search of searchTerms) {
+    // Search for series matching the title, then get their episodes
+    if (wantEpisodes) {
+      const seriesParams = new URLSearchParams();
+      seriesParams.set("recursive", "true");
+      seriesParams.set("includeItemTypes", "Series");
+      seriesParams.set("searchTerm", search);
+      seriesParams.set("limit", "10");
 
-    if (filter.libraryIds?.length) {
-      for (const libId of filter.libraryIds) {
-        seriesParams.set("parentId", libId);
+      if (filter.libraryIds?.length) {
+        for (const libId of filter.libraryIds) {
+          seriesParams.set("parentId", libId);
+          const seriesList = await queryItemsRaw(seriesParams);
+          for (const series of seriesList) {
+            const episodes = await getEpisodes(series.Id, limit);
+            allItems.push(...episodes);
+          }
+        }
+      } else {
         const seriesList = await queryItemsRaw(seriesParams);
         for (const series of seriesList) {
           const episodes = await getEpisodes(series.Id, limit);
           allItems.push(...episodes);
         }
       }
-    } else {
-      const seriesList = await queryItemsRaw(seriesParams);
-      for (const series of seriesList) {
-        const episodes = await getEpisodes(series.Id, limit);
-        allItems.push(...episodes);
-      }
     }
-  }
 
-  // Search for movies matching the title
-  if (wantMovies) {
-    const movieParams = new URLSearchParams();
-    movieParams.set("recursive", "true");
-    movieParams.set("includeItemTypes", "Movie");
-    movieParams.set("searchTerm", search);
-    movieParams.set("fields", "Path,Genres,Tags,Overview,MediaSources");
-    movieParams.set("limit", String(limit));
+    // Search for movies matching the title
+    if (wantMovies) {
+      const movieParams = new URLSearchParams();
+      movieParams.set("recursive", "true");
+      movieParams.set("includeItemTypes", "Movie");
+      movieParams.set("searchTerm", search);
+      movieParams.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
+      movieParams.set("limit", String(limit));
 
-    if (filter.libraryIds?.length) {
-      for (const libId of filter.libraryIds) {
-        movieParams.set("parentId", libId);
+      if (filter.libraryIds?.length) {
+        for (const libId of filter.libraryIds) {
+          movieParams.set("parentId", libId);
+          const movies = await queryItems(movieParams);
+          allItems.push(...movies);
+        }
+      } else {
         const movies = await queryItems(movieParams);
         allItems.push(...movies);
       }
-    } else {
-      const movies = await queryItems(movieParams);
-      allItems.push(...movies);
     }
   }
 
