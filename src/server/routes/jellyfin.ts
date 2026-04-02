@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { JellyfinLibrary } from "../../shared/types.js";
 
 export const jellyfinRouter = Router();
 
@@ -17,6 +18,10 @@ jellyfinRouter.get("/status", async (_req, res) => {
 
   try {
     const response = await fetch(`${JELLYFIN_URL}/System/Info/Public`);
+    if (!response.ok) {
+      res.json({ connected: false, error: `Jellyfin returned ${response.status}` });
+      return;
+    }
     const data = await response.json();
     res.json({
       connected: true,
@@ -41,8 +46,12 @@ jellyfinRouter.get("/libraries", async (_req, res) => {
     const response = await fetch(`${JELLYFIN_URL}/Library/VirtualFolders`, {
       headers: authHeaders,
     });
+    if (!response.ok) {
+      res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
+      return;
+    }
     const data = await response.json();
-    const libraries = data.map((lib: any) => ({
+    const libraries: JellyfinLibrary[] = data.map((lib: JellyfinLibrary) => ({
       Name: lib.Name,
       CollectionType: lib.CollectionType,
       ItemId: lib.ItemId,
@@ -73,6 +82,10 @@ jellyfinRouter.get("/items", async (req, res) => {
   try {
     const url = `${JELLYFIN_URL}/Items?parentId=${parentId}&includeItemTypes=Movie,Episode&recursive=true&fields=Path,Genres,Tags,Overview&limit=${limit}`;
     const response = await fetch(url, { headers: authHeaders });
+    if (!response.ok) {
+      res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
+      return;
+    }
     const data = await response.json();
     res.json({ items: data.Items, totalCount: data.TotalRecordCount });
   } catch (err) {

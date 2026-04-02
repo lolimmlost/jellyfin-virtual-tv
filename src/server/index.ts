@@ -7,10 +7,16 @@ import { jellyfinRouter } from "./routes/jellyfin.js";
 import { iptvRouter } from "./routes/iptv.js";
 import { channelRouter } from "./routes/channels.js";
 
+// Warn about missing Jellyfin config at startup
+if (!process.env.JELLYFIN_URL || !process.env.JELLYFIN_API_KEY) {
+  console.warn("WARNING: JELLYFIN_URL and/or JELLYFIN_API_KEY not set. Jellyfin features will be unavailable.");
+}
+
 const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
-app.use(cors());
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors(corsOrigin ? { origin: corsOrigin.split(",").map((s) => s.trim()) } : undefined));
 app.use(express.json());
 
 // Health check

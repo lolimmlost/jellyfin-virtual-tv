@@ -46,8 +46,24 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
   return queryItems(params);
 }
 
+// Query across library IDs (or all libraries if none specified)
+async function queryAcrossLibraries<T>(
+  params: URLSearchParams,
+  libraryIds: string[] | undefined,
+  queryFn: (p: URLSearchParams) => Promise<T[]>,
+): Promise<T[]> {
+  if (libraryIds?.length) {
+    const results: T[] = [];
+    for (const libId of libraryIds) {
+      params.set("parentId", libId);
+      results.push(...await queryFn(params));
+    }
+    return results;
+  }
+  return queryFn(params);
+}
+
 async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<JellyfinItem[]> {
-  // Support comma-separated title matches (e.g. "scream, scary movie, tucker and dale")
   const searchTerms = filter.titleMatch!.split(",").map((s) => s.trim()).filter(Boolean);
   const wantEpisodes = !filter.itemTypes?.length || filter.itemTypes.includes("Episode");
   const wantMovies = !filter.itemTypes?.length || filter.itemTypes.includes("Movie");
@@ -55,7 +71,6 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
   const allItems: JellyfinItem[] = [];
 
   for (const search of searchTerms) {
-    // Search for series matching the title, then get their episodes
     if (wantEpisodes) {
       const seriesParams = new URLSearchParams();
       seriesParams.set("recursive", "true");
@@ -63,25 +78,13 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       seriesParams.set("searchTerm", search);
       seriesParams.set("limit", "10");
 
-      if (filter.libraryIds?.length) {
-        for (const libId of filter.libraryIds) {
-          seriesParams.set("parentId", libId);
-          const seriesList = await queryItemsRaw(seriesParams);
-          for (const series of seriesList) {
-            const episodes = await getEpisodes(series.Id, limit);
-            allItems.push(...episodes);
-          }
-        }
-      } else {
-        const seriesList = await queryItemsRaw(seriesParams);
-        for (const series of seriesList) {
-          const episodes = await getEpisodes(series.Id, limit);
-          allItems.push(...episodes);
-        }
+      const seriesList = await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw);
+      for (const series of seriesList) {
+        const episodes = await getEpisodes(series.Id, limit);
+        allItems.push(...episodes);
       }
     }
 
-    // Search for movies matching the title
     if (wantMovies) {
       const movieParams = new URLSearchParams();
       movieParams.set("recursive", "true");
@@ -90,16 +93,8 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       movieParams.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
       movieParams.set("limit", String(limit));
 
-      if (filter.libraryIds?.length) {
-        for (const libId of filter.libraryIds) {
-          movieParams.set("parentId", libId);
-          const movies = await queryItems(movieParams);
-          allItems.push(...movies);
-        }
-      } else {
-        const movies = await queryItems(movieParams);
-        allItems.push(...movies);
-      }
+      const movies = await queryAcrossLibraries(movieParams, filter.libraryIds, queryItems);
+      allItems.push(...movies);
     }
   }
 
@@ -130,7 +125,7 @@ async function queryItems(params: URLSearchParams): Promise<JellyfinItem[]> {
   }
 }
 
-async function queryItemsRaw(params: URLSearchParams): Promise<any[]> {
+async function queryItemsRaw(params: URLSearchParams): Promise<JellyfinItem[]> {
   try {
     const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
     const response = await fetch(url, { headers: authHeaders });

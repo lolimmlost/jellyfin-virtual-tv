@@ -1,8 +1,18 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { spawn, type ChildProcess } from "child_process";
 import { getAllChannels, getSchedule, getCurrentSlot, getRemainingSlots } from "../schedule.js";
+import type { Channel } from "../../shared/types.js";
 
 export const iptvRouter = Router();
+
+function findChannel(req: Request, res: Response): Channel | null {
+  const channel = getAllChannels().find((c) => c.id === req.params.channelId);
+  if (!channel) {
+    res.status(404).json({ error: "Channel not found" });
+    return null;
+  }
+  return channel;
+}
 
 // M3U playlist — Jellyfin adds this as an IPTV tuner
 iptvRouter.get("/channels.m3u", async (req, res) => {
@@ -64,12 +74,8 @@ iptvRouter.get("/epg.xml", async (_req, res) => {
 
 // Schedule API — preview what's on
 iptvRouter.get("/schedule/:channelId", async (req, res) => {
-  const channels = getAllChannels();
-  const channel = channels.find((c) => c.id === req.params.channelId);
-  if (!channel) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
-  }
+  const channel = findChannel(req, res);
+  if (!channel) return;
 
   const slots = await getSchedule(channel);
   res.json({ channel: channel.name, slots });
@@ -77,12 +83,8 @@ iptvRouter.get("/schedule/:channelId", async (req, res) => {
 
 // What's on now
 iptvRouter.get("/now/:channelId", async (req, res) => {
-  const channels = getAllChannels();
-  const channel = channels.find((c) => c.id === req.params.channelId);
-  if (!channel) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
-  }
+  const channel = findChannel(req, res);
+  if (!channel) return;
 
   const current = await getCurrentSlot(channel);
   if (!current) {
@@ -101,12 +103,8 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
 
 // Stream endpoint — continuously chains episodes for seamless live TV
 iptvRouter.get("/stream/:channelId", async (req, res) => {
-  const channels = getAllChannels();
-  const channel = channels.find((c) => c.id === req.params.channelId);
-  if (!channel) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
-  }
+  const channel = findChannel(req, res);
+  if (!channel) return;
 
   const slots = await getRemainingSlots(channel);
   if (slots.length === 0) {

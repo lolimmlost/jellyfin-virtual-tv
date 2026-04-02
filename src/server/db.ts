@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { mkdirSync } from "fs";
+import type { Channel, ChannelFilter } from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,3 +32,25 @@ db.exec(`
 `);
 
 export default db;
+
+export interface ChannelRow {
+  id: string;
+  name: string;
+  number: number;
+  filters: string;
+  shuffle_mode: string;
+  logo_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function rowToChannel(row: ChannelRow): Channel {
+  return {
+    id: row.id,
+    name: row.name,
+    number: row.number,
+    filters: JSON.parse(row.filters) as ChannelFilter,
+    shuffleMode: row.shuffle_mode as Channel["shuffleMode"],
+    logoUrl: row.logo_url ?? undefined,
+  };
+}

@@ -1,20 +1,22 @@
 import { Router } from "express";
-import db from "../db.js";
+import db, { rowToChannel, type ChannelRow } from "../db.js";
 import { newId } from "../utils.js";
-import type { Channel, ChannelFilter } from "../../shared/types.js";
+import type { Channel } from "../../shared/types.js";
 
 export const channelRouter = Router();
 
+const VALID_SHUFFLE_MODES = ["random", "sequential"] as const;
+
 // List all channels
 channelRouter.get("/", (_req, res) => {
-  const rows = db.prepare("SELECT * FROM channels ORDER BY number ASC").all();
+  const rows = db.prepare("SELECT * FROM channels ORDER BY number ASC").all() as ChannelRow[];
   const channels: Channel[] = rows.map(rowToChannel);
   res.json({ channels });
 });
 
 // Get single channel
 channelRouter.get("/:id", (req, res) => {
-  const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id);
+  const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as ChannelRow | undefined;
   if (!row) {
     res.status(404).json({ error: "Channel not found" });
     return;
@@ -34,7 +36,7 @@ channelRouter.post("/", (req, res) => {
     res.status(400).json({ error: "number must be a positive integer" });
     return;
   }
-  if (shuffleMode && !["random", "sequential"].includes(shuffleMode)) {
+  if (shuffleMode && !(VALID_SHUFFLE_MODES as readonly string[]).includes(shuffleMode)) {
     res.status(400).json({ error: "shuffleMode must be 'random' or 'sequential'" });
     return;
   }
@@ -48,10 +50,10 @@ channelRouter.post("/", (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(id, name, number, filtersJson, shuffleMode || "random", logoUrl || null);
 
-    const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(id);
+    const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(id) as ChannelRow;
     res.status(201).json({ channel: rowToChannel(row) });
-  } catch (err: any) {
-    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+  } catch (err: unknown) {
+    if (err instanceof Error && (err as Error & { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
       res.status(409).json({ error: `Channel number ${number} is already taken` });
       return;
     }
@@ -61,7 +63,7 @@ channelRouter.post("/", (req, res) => {
 
 // Update channel
 channelRouter.put("/:id", (req, res) => {
-  const existing = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as any;
+  const existing = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as ChannelRow | undefined;
   if (!existing) {
     res.status(404).json({ error: "Channel not found" });
     return;
@@ -69,7 +71,7 @@ channelRouter.put("/:id", (req, res) => {
 
   const { name, number, filters, shuffleMode, logoUrl } = req.body;
 
-  if (shuffleMode && !["random", "sequential"].includes(shuffleMode)) {
+  if (shuffleMode && !(VALID_SHUFFLE_MODES as readonly string[]).includes(shuffleMode)) {
     res.status(400).json({ error: "shuffleMode must be 'random' or 'sequential'" });
     return;
   }
@@ -89,10 +91,10 @@ channelRouter.put("/:id", (req, res) => {
       WHERE id = ?
     `).run(updated.name, updated.number, updated.filters, updated.shuffle_mode, updated.logo_url, req.params.id);
 
-    const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id);
+    const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as ChannelRow;
     res.json({ channel: rowToChannel(row) });
-  } catch (err: any) {
-    if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+  } catch (err: unknown) {
+    if (err instanceof Error && (err as Error & { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
       res.status(409).json({ error: `Channel number ${number} is already taken` });
       return;
     }
@@ -110,14 +112,3 @@ channelRouter.delete("/:id", (req, res) => {
   res.json({ deleted: req.params.id });
 });
 
-// Convert database row to Channel object
-function rowToChannel(row: any): Channel {
-  return {
-    id: row.id,
-    name: row.name,
-    number: row.number,
-    filters: JSON.parse(row.filters) as ChannelFilter,
-    shuffleMode: row.shuffle_mode,
-    logoUrl: row.logo_url,
-  };
-}
