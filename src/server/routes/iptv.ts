@@ -121,7 +121,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  res.setHeader("Content-Type", "video/x-matroska");
+  res.setHeader("Content-Type", "video/mp2t");
   res.setHeader("Transfer-Encoding", "chunked");
 
   let cancelled = false;
@@ -142,7 +142,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
       "-ss", String(offsetSeconds),
       "-i", streamUrl,
       "-c", "copy",
-      "-f", "matroska",
+      "-f", "mpegts",
       "-fflags", "+genpts",
       "pipe:1",
     ];
