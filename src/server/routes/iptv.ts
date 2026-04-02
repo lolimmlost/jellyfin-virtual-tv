@@ -45,7 +45,9 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
   for (const ch of channels) {
     const logoParam = ch.logoUrl ? ` tvg-logo="${ch.logoUrl}"` : "";
     m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${ch.name}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
-    m3u += `${baseUrl}/iptv/stream/${ch.id}.ts\n\n`;
+    // ?f= is a format version that busts Jellyfin's probe cache when our stream format changes
+    // Bump this number whenever the stream encoding pipeline changes (e.g., passthrough → GPU transcode)
+    m3u += `${baseUrl}/iptv/stream/${ch.id}.ts?f=2\n\n`;
   }
 
   res.setHeader("Content-Type", "audio/x-mpegurl");
@@ -145,9 +147,6 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   // This offloads HEVC decoding to Jellyfin's GPU and ensures consistent H264 output
   const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
   const concatFile = join(tempDir, "playlist.txt");
-  const firstOffset = slots[0]?.offsetSeconds || 0;
-
-  const lang = channel.audioLanguage || "eng";
 
   let concatContent = "";
   for (let i = 0; i < slots.length; i++) {
@@ -174,13 +173,21 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   writeFileSync(concatFile, concatContent);
 
   // Jellyfin transcodes to H264+AAC — we just copy and remux to MPEG-TS
+  // Explicit -map + codec tags ensure the output PMT declares H264/AAC correctly
+  // even if the input TS metadata is ambiguous during concat transitions
   const ffmpegArgs = [
     "-fflags", "+igndts+genpts",
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
+    "-probesize", "1048576",
+    "-analyzeduration", "2000000",
     "-i", concatFile,
-    "-c", "copy",
+    "-map", "0:v:0",
+    "-map", "0:a:0",
+    "-c:v", "copy",
+    "-c:a", "copy",
+    "-tag:v", "avc1",
     "-f", "mpegts",
     "-mpegts_flags", "resend_headers",
     "-flush_packets", "1",
@@ -191,42 +198,16 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  // Send headers immediately so Jellyfin's probe can start reading right away
+  res.setHeader("Content-Type", "video/mp2t");
+  res.setHeader("Transfer-Encoding", "chunked");
+
   req.on("close", () => {
     ffmpeg.kill("SIGTERM");
   });
 
-  // Pre-buffer: wait for enough data (including video keyframe) before sending
-  // This ensures Jellyfin's probe gets valid H264 data on first read
-  const PRE_BUFFER_SIZE = 256 * 1024; // 256KB
-  const PRE_BUFFER_TIMEOUT = 15_000; // 15s max wait
-  let preBuffer: Buffer[] = [];
-  let preBufferBytes = 0;
-  let headersSent = false;
-
-  const preBufferTimer = setTimeout(() => {
-    // Timeout — send whatever we have
-    if (!headersSent && !res.writableEnded) {
-      headersSent = true;
-      res.setHeader("Content-Type", "video/mp2t");
-      res.setHeader("Transfer-Encoding", "chunked");
-      for (const buf of preBuffer) res.write(buf);
-      preBuffer = [];
-    }
-  }, PRE_BUFFER_TIMEOUT);
-
   ffmpeg.stdout.on("data", (chunk: Buffer) => {
-    if (!headersSent) {
-      preBuffer.push(chunk);
-      preBufferBytes += chunk.length;
-      if (preBufferBytes >= PRE_BUFFER_SIZE) {
-        clearTimeout(preBufferTimer);
-        headersSent = true;
-        res.setHeader("Content-Type", "video/mp2t");
-        res.setHeader("Transfer-Encoding", "chunked");
-        for (const buf of preBuffer) res.write(buf);
-        preBuffer = [];
-      }
-    } else if (!res.writableEnded) {
+    if (!res.writableEnded) {
       res.write(chunk);
     } else {
       ffmpeg.kill("SIGTERM");
@@ -243,15 +224,9 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   });
 
   ffmpeg.on("close", (code) => {
-    clearTimeout(preBufferTimer);
     if (code !== 0 && code !== null) {
       console.error(`[stream] ffmpeg exited with code ${code} for channel ${channel.name}`);
       console.error(`[stream] ffmpeg stderr: ${stderrBuf.slice(0, 2000)}`);
-    }
-    // Flush any remaining pre-buffer
-    if (!headersSent && preBuffer.length > 0 && !res.writableEnded) {
-      res.setHeader("Content-Type", "video/mp2t");
-      for (const buf of preBuffer) res.write(buf);
     }
     // Clean up temp concat file
     try { unlinkSync(concatFile); } catch {}
