@@ -5,7 +5,7 @@ import db from "./db.js";
 // In-memory schedule cache: channelId -> { slots, generatedAt }
 const scheduleCache = new Map<string, { slots: ScheduleSlot[]; generatedAt: number }>();
 
-const SCHEDULE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SCHEDULE_DURATION_MS = 48 * 60 * 60 * 1000; // 48 hours — covers all timezones
 const CACHE_TTL_MS = 60 * 60 * 1000; // Regenerate every hour
 const TICKS_PER_MS = 10_000;
 
