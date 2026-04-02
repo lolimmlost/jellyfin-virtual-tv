@@ -249,7 +249,7 @@ Set the channel's stream mode to **Transcode** (the default). Passthrough (`copy
 
 Jellyfin caches codec probe results per channel. If you changed the stream pipeline (e.g., enabled GPU transcoding), Jellyfin may still have stale HEVC probe data cached. Signs: probe takes <1ms instead of 3-4 seconds, codec shows "hevc" despite transcoding to H264.
 
-**Fix:** The app includes a cache-busting version parameter (`?f=2`) in M3U stream URLs. If you hit this issue, bump the version in `src/server/routes/iptv.ts`, redeploy, and refresh the M3U tuner in Jellyfin Dashboard > Live TV.
+**Fix:** The app includes a cache-busting version parameter (`?f=N`) in M3U stream URLs. If you hit this issue, bump the version in `src/server/routes/iptv.ts`, redeploy, and refresh the M3U tuner in Jellyfin Dashboard > Live TV.
 
 ### Wrong audio language
 
