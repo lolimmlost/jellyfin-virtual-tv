@@ -137,6 +137,7 @@ export default function App() {
         number: updated.number,
         filters: updated.filters,
         shuffleMode: updated.shuffleMode,
+        streamMode: updated.streamMode,
         logoUrl: updated.logoUrl,
       }),
     });
@@ -225,7 +226,7 @@ export default function App() {
                     <span style={{ fontSize: 14, fontWeight: 700 }}>{ch.name}</span>
                   </div>
                   <div style={{ fontSize: 11, color: c.textDim, marginTop: 4, marginLeft: 44, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                    {ch.shuffleMode} · {summarizeFilters(ch.filters)}
+                    {ch.shuffleMode} · {ch.streamMode === "copy" ? "passthrough" : "transcode"} · {summarizeFilters(ch.filters)}
                   </div>
                 </div>
               );
@@ -285,7 +286,7 @@ function ChannelDetail({ channel, onEdit, onDelete }: {
         <div>
           <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>{channel.name}</h2>
           <span style={{ color: c.textDim, fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Channel {channel.number} · {channel.shuffleMode}
+            Channel {channel.number} · {channel.shuffleMode} · {channel.streamMode === "copy" ? "passthrough" : "transcode"}
           </span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -324,11 +325,12 @@ function ChannelEditor({ channel, onSave, onCancel }: {
   const [name, setName] = useState(channel.name);
   const [number, setNumber] = useState(channel.number);
   const [shuffleMode, setShuffleMode] = useState(channel.shuffleMode);
+  const [streamMode, setStreamMode] = useState(channel.streamMode || "transcode");
   const [filters, setFilters] = useState<ChannelFilter>(channel.filters);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ ...channel, name, number, shuffleMode, filters });
+    onSave({ ...channel, name, number, shuffleMode, streamMode, filters });
   }
 
   return (
@@ -367,6 +369,25 @@ function ChannelEditor({ channel, onSave, onCancel }: {
               </button>
             ))}
           </div>
+        </Field>
+        <Field label="Stream Mode">
+          <div style={{ display: "flex", gap: 8 }}>
+            {([["transcode", "Transcode"], ["copy", "Passthrough"]] as const).map(([mode, label]) => (
+              <button key={mode} type="button" onClick={() => setStreamMode(mode)} style={{
+                ...buttonStyle,
+                background: streamMode === mode ? c.accent : c.surface,
+                color: streamMode === mode ? c.black : c.text,
+                padding: "8px 16px",
+              }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span style={{ fontSize: 11, color: c.textDim, marginTop: 6, display: "block", fontWeight: 700 }}>
+            {streamMode === "transcode"
+              ? "Normalizes all media to H.264+AAC — smooth transitions between episodes with different formats"
+              : "Passes through original codecs — lower CPU but may glitch if episodes have different codecs/resolutions"}
+          </span>
         </Field>
       </Section>
 

@@ -31,6 +31,13 @@ db.exec(`
   )
 `);
 
+// Migration: add stream_mode column
+try {
+  db.exec(`ALTER TABLE channels ADD COLUMN stream_mode TEXT NOT NULL DEFAULT 'transcode'`);
+} catch {
+  // Column already exists
+}
+
 export default db;
 
 export interface ChannelRow {
@@ -39,6 +46,7 @@ export interface ChannelRow {
   number: number;
   filters: string;
   shuffle_mode: string;
+  stream_mode: string;
   logo_url: string | null;
   created_at: string;
   updated_at: string;
@@ -51,6 +59,7 @@ export function rowToChannel(row: ChannelRow): Channel {
     number: row.number,
     filters: JSON.parse(row.filters) as ChannelFilter,
     shuffleMode: row.shuffle_mode as Channel["shuffleMode"],
+    streamMode: (row.stream_mode || "transcode") as Channel["streamMode"],
     logoUrl: row.logo_url ?? undefined,
   };
 }

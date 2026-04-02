@@ -6,6 +6,7 @@ import type { Channel } from "../../shared/types.js";
 export const channelRouter = Router();
 
 const VALID_SHUFFLE_MODES = ["random", "sequential"] as const;
+const VALID_STREAM_MODES = ["transcode", "copy"] as const;
 
 // List all channels
 channelRouter.get("/", (_req, res) => {
@@ -26,7 +27,7 @@ channelRouter.get("/:id", (req, res) => {
 
 // Create channel
 channelRouter.post("/", (req, res) => {
-  const { name, number, filters, shuffleMode, logoUrl } = req.body;
+  const { name, number, filters, shuffleMode, streamMode, logoUrl } = req.body;
 
   if (!name || typeof name !== "string") {
     res.status(400).json({ error: "name is required" });
@@ -40,15 +41,19 @@ channelRouter.post("/", (req, res) => {
     res.status(400).json({ error: "shuffleMode must be 'random' or 'sequential'" });
     return;
   }
+  if (streamMode && !(VALID_STREAM_MODES as readonly string[]).includes(streamMode)) {
+    res.status(400).json({ error: "streamMode must be 'transcode' or 'copy'" });
+    return;
+  }
 
   const id = newId();
   const filtersJson = JSON.stringify(filters || {});
 
   try {
     db.prepare(`
-      INSERT INTO channels (id, name, number, filters, shuffle_mode, logo_url)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, name, number, filtersJson, shuffleMode || "random", logoUrl || null);
+      INSERT INTO channels (id, name, number, filters, shuffle_mode, stream_mode, logo_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, number, filtersJson, shuffleMode || "random", streamMode || "transcode", logoUrl || null);
 
     const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(id) as ChannelRow;
     res.status(201).json({ channel: rowToChannel(row) });
@@ -69,10 +74,14 @@ channelRouter.put("/:id", (req, res) => {
     return;
   }
 
-  const { name, number, filters, shuffleMode, logoUrl } = req.body;
+  const { name, number, filters, shuffleMode, streamMode, logoUrl } = req.body;
 
   if (shuffleMode && !(VALID_SHUFFLE_MODES as readonly string[]).includes(shuffleMode)) {
     res.status(400).json({ error: "shuffleMode must be 'random' or 'sequential'" });
+    return;
+  }
+  if (streamMode && !(VALID_STREAM_MODES as readonly string[]).includes(streamMode)) {
+    res.status(400).json({ error: "streamMode must be 'transcode' or 'copy'" });
     return;
   }
 
@@ -81,15 +90,16 @@ channelRouter.put("/:id", (req, res) => {
     number: number ?? existing.number,
     filters: filters !== undefined ? JSON.stringify(filters) : existing.filters,
     shuffle_mode: shuffleMode ?? existing.shuffle_mode,
+    stream_mode: streamMode ?? existing.stream_mode,
     logo_url: logoUrl !== undefined ? logoUrl : existing.logo_url,
   };
 
   try {
     db.prepare(`
       UPDATE channels
-      SET name = ?, number = ?, filters = ?, shuffle_mode = ?, logo_url = ?, updated_at = datetime('now')
+      SET name = ?, number = ?, filters = ?, shuffle_mode = ?, stream_mode = ?, logo_url = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(updated.name, updated.number, updated.filters, updated.shuffle_mode, updated.logo_url, req.params.id);
+    `).run(updated.name, updated.number, updated.filters, updated.shuffle_mode, updated.stream_mode, updated.logo_url, req.params.id);
 
     const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as ChannelRow;
     res.json({ channel: rowToChannel(row) });

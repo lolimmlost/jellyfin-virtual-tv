@@ -4,6 +4,7 @@ export interface Channel {
   number: number;
   filters: ChannelFilter;
   shuffleMode: "random" | "sequential";
+  streamMode: "transcode" | "copy";
   logoUrl?: string;
 }
 

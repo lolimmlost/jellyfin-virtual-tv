@@ -142,12 +142,17 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   res.setHeader("Content-Type", "video/mp2t");
   res.setHeader("Transfer-Encoding", "chunked");
 
+  const codecArgs = channel.streamMode === "copy"
+    ? ["-c", "copy"]
+    : ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "23",
+       "-c:a", "aac", "-b:a", "192k"];
+
   const ffmpegArgs = [
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
     "-i", concatFile,
-    "-c", "copy",
+    ...codecArgs,
     "-f", "mpegts",
     "-fflags", "+genpts",
     "pipe:1",
