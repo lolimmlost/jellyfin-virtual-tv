@@ -185,7 +185,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   // dump_extra re-injects SPS/PPS at every keyframe so downstream decoders can
   // join mid-stream or survive concat transitions without "non-existing PPS" errors
   const ffmpegArgs = [
-    "-fflags", "+genpts+discardcorrupt",
+    "-fflags", "+igndts+genpts+discardcorrupt",
     "-f", "concat",
     "-safe", "0",
     "-protocol_whitelist", "file,http,https,tcp,tls",
