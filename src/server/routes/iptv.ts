@@ -157,8 +157,11 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
       VideoCodec: "h264",
       AudioCodec: "aac",
       AudioChannels: "2",
-      MaxStreamingBitrate: "8000000",
+      MaxStreamingBitrate: "20000000",
+      VideoBitRate: "8000000",
       AudioBitRate: "192000",
+      MaxWidth: "1920",
+      MaxHeight: "1080",
       AudioStreamIndex: "0",
     });
     // Use StartTimeTicks for seeking (handled server-side by Jellyfin)
