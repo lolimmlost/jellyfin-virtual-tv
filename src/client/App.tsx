@@ -148,10 +148,19 @@ export default function App() {
         display: "flex", justifyContent: "space-between", alignItems: "center",
         padding: "16px 24px", borderBottom: `4px solid ${c.border}`, background: c.bg,
       }}>
-        <h1 style={{
-          margin: 0, fontSize: 24, fontWeight: 800, color: c.text, fontFamily: font,
-          background: c.accent, padding: "4px 14px", border: `4px solid ${c.border}`, lineHeight: 1.3,
-        }}>Virtual TV</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <h1 style={{
+            margin: 0, fontSize: 24, fontWeight: 800, color: c.text, fontFamily: font,
+            background: c.accent, padding: "4px 14px", border: `4px solid ${c.border}`, lineHeight: 1.3,
+          }}>Virtual TV</h1>
+          <span style={{
+            fontSize: 10, fontWeight: 800, fontFamily: font, color: c.textDim,
+            textTransform: "uppercase", letterSpacing: "0.15em", lineHeight: 1,
+          }}>
+            <span style={{ display: "block", fontSize: 9, letterSpacing: "0.2em", opacity: 0.6 }}>styled by</span>
+            <span style={{ color: c.yellow, fontSize: 13, letterSpacing: "0.1em" }}>appahouse</span>
+          </span>
+        </div>
         <StatusPill status={status} />
       </header>
 
