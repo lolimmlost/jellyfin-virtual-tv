@@ -154,9 +154,6 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   }
   writeFileSync(concatFile, concatContent);
 
-  res.setHeader("Content-Type", "video/mp2t");
-  res.setHeader("Transfer-Encoding", "chunked");
-
   const lang = channel.audioLanguage || "eng";
 
   // Select preferred audio language, fall back to first audio stream if no match
@@ -190,8 +187,38 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     ffmpeg.kill("SIGTERM");
   });
 
+  // Pre-buffer: wait for enough data (including video keyframe) before sending
+  // This ensures Jellyfin's probe gets valid H264 data on first read
+  const PRE_BUFFER_SIZE = 256 * 1024; // 256KB
+  const PRE_BUFFER_TIMEOUT = 15_000; // 15s max wait
+  let preBuffer: Buffer[] = [];
+  let preBufferBytes = 0;
+  let headersSent = false;
+
+  const preBufferTimer = setTimeout(() => {
+    // Timeout — send whatever we have
+    if (!headersSent && !res.writableEnded) {
+      headersSent = true;
+      res.setHeader("Content-Type", "video/mp2t");
+      res.setHeader("Transfer-Encoding", "chunked");
+      for (const buf of preBuffer) res.write(buf);
+      preBuffer = [];
+    }
+  }, PRE_BUFFER_TIMEOUT);
+
   ffmpeg.stdout.on("data", (chunk: Buffer) => {
-    if (!res.writableEnded) {
+    if (!headersSent) {
+      preBuffer.push(chunk);
+      preBufferBytes += chunk.length;
+      if (preBufferBytes >= PRE_BUFFER_SIZE) {
+        clearTimeout(preBufferTimer);
+        headersSent = true;
+        res.setHeader("Content-Type", "video/mp2t");
+        res.setHeader("Transfer-Encoding", "chunked");
+        for (const buf of preBuffer) res.write(buf);
+        preBuffer = [];
+      }
+    } else if (!res.writableEnded) {
       res.write(chunk);
     } else {
       ffmpeg.kill("SIGTERM");
@@ -208,9 +235,15 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   });
 
   ffmpeg.on("close", (code) => {
+    clearTimeout(preBufferTimer);
     if (code !== 0 && code !== null) {
       console.error(`[stream] ffmpeg exited with code ${code} for channel ${channel.name}`);
       console.error(`[stream] ffmpeg stderr: ${stderrBuf.slice(0, 2000)}`);
+    }
+    // Flush any remaining pre-buffer
+    if (!headersSent && preBuffer.length > 0 && !res.writableEnded) {
+      res.setHeader("Content-Type", "video/mp2t");
+      for (const buf of preBuffer) res.write(buf);
     }
     // Clean up temp concat file
     try { unlinkSync(concatFile); } catch {}
