@@ -15,6 +15,12 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
     return applyExclusions(await fetchByTitleMatch(filter, limit), filter);
   }
 
+  // Tags are set on Series, not Episodes — Jellyfin's tags filter returns 0 episodes.
+  // When filtering by tag with episodes, find matching Series first, then get their episodes.
+  if (filter.tags?.length) {
+    return applyExclusions(await fetchByTag(filter, limit), filter);
+  }
+
   const params = new URLSearchParams();
   params.set("recursive", "true");
   params.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
@@ -24,10 +30,6 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
 
   const types = filter.itemTypes?.length ? filter.itemTypes.join(",") : "Movie,Episode";
   params.set("includeItemTypes", types);
-
-  if (filter.tags?.length) {
-    params.set("tags", filter.tags.join(","));
-  }
 
   // Multiple genres use OR logic — query each genre separately and deduplicate
   if (filter.genres && filter.genres.length > 1) {
@@ -82,6 +84,51 @@ async function queryAcrossLibraries<T>(
     return results;
   }
   return queryFn(params);
+}
+
+// Tags are on Series/Movies, not Episodes. Find matching Series by tag, then get their episodes.
+async function fetchByTag(filter: ChannelFilter, limit: number): Promise<JellyfinItem[]> {
+  const tags = filter.tags!.join(",");
+  const wantEpisodes = !filter.itemTypes?.length || filter.itemTypes.includes("Episode");
+  const wantMovies = !filter.itemTypes?.length || filter.itemTypes.includes("Movie");
+
+  const allItems: JellyfinItem[] = [];
+
+  if (wantEpisodes) {
+    const seriesParams = new URLSearchParams();
+    seriesParams.set("recursive", "true");
+    seriesParams.set("includeItemTypes", "Series");
+    seriesParams.set("tags", tags);
+    seriesParams.set("limit", "200");
+
+    if (filter.genres?.length) {
+      seriesParams.set("genres", filter.genres.join("|"));
+    }
+
+    const seriesList = await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw);
+    for (const series of seriesList) {
+      const episodes = await getEpisodes(series.Id, limit);
+      allItems.push(...episodes);
+    }
+  }
+
+  if (wantMovies) {
+    const movieParams = new URLSearchParams();
+    movieParams.set("recursive", "true");
+    movieParams.set("includeItemTypes", "Movie");
+    movieParams.set("tags", tags);
+    movieParams.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
+    movieParams.set("limit", String(limit));
+
+    if (filter.genres?.length) {
+      movieParams.set("genres", filter.genres.join("|"));
+    }
+
+    const movies = await queryAcrossLibraries(movieParams, filter.libraryIds, queryItems);
+    allItems.push(...movies);
+  }
+
+  return allItems.slice(0, limit);
 }
 
 async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<JellyfinItem[]> {
