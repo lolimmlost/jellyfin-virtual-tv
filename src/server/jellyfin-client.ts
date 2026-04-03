@@ -87,6 +87,7 @@ async function queryAcrossLibraries<T>(
 }
 
 // Tags are on Series/Movies, not Episodes. Find matching Series by tag, then get their episodes.
+// Exclusions are also applied at the Series level since episodes don't carry genres/tags.
 async function fetchByTag(filter: ChannelFilter, limit: number): Promise<JellyfinItem[]> {
   const tags = filter.tags!.join(",");
   const wantEpisodes = !filter.itemTypes?.length || filter.itemTypes.includes("Episode");
@@ -99,13 +100,17 @@ async function fetchByTag(filter: ChannelFilter, limit: number): Promise<Jellyfi
     seriesParams.set("recursive", "true");
     seriesParams.set("includeItemTypes", "Series");
     seriesParams.set("tags", tags);
+    seriesParams.set("fields", "Genres,Tags");
     seriesParams.set("limit", "200");
 
     if (filter.genres?.length) {
       seriesParams.set("genres", filter.genres.join("|"));
     }
 
-    const seriesList = await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw);
+    const seriesList = applyExclusions(
+      await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw),
+      filter,
+    );
     for (const series of seriesList) {
       const episodes = await getEpisodes(series.Id, limit);
       allItems.push(...episodes);
@@ -125,7 +130,7 @@ async function fetchByTag(filter: ChannelFilter, limit: number): Promise<Jellyfi
     }
 
     const movies = await queryAcrossLibraries(movieParams, filter.libraryIds, queryItems);
-    allItems.push(...movies);
+    allItems.push(...applyExclusions(movies, filter));
   }
 
   return allItems.slice(0, limit);
