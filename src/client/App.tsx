@@ -792,6 +792,22 @@ function FilterEditor({ filters, onChange }: {
         />
       </Field>
 
+      <Field label="Exclude Genres">
+        <TagInput
+          values={filters.excludeGenres || []}
+          onChange={(v) => updateFilter("excludeGenres", v.length > 0 ? v : undefined)}
+          placeholder="e.g. Animation"
+        />
+      </Field>
+
+      <Field label="Exclude Tags">
+        <TagInput
+          values={filters.excludeTags || []}
+          onChange={(v) => updateFilter("excludeTags", v.length > 0 ? v : undefined)}
+          placeholder="e.g. anime, adult animation"
+        />
+      </Field>
+
       <Field label="Title Match">
         <input
           value={filters.titleMatch || ""}
@@ -996,6 +1012,8 @@ function FilterSummary({ filters }: { filters: ChannelFilter }) {
   if (filters.itemTypes?.length) parts.push(filters.itemTypes.join(", "));
   if (filters.genres?.length) parts.push(`Genres: ${filters.genres.join(", ")}`);
   if (filters.tags?.length) parts.push(`Tags: ${filters.tags.join(", ")}`);
+  if (filters.excludeGenres?.length) parts.push(`Exclude genres: ${filters.excludeGenres.join(", ")}`);
+  if (filters.excludeTags?.length) parts.push(`Exclude tags: ${filters.excludeTags.join(", ")}`);
   if (filters.titleMatch) parts.push(`Title: "${filters.titleMatch}"`);
 
   if (parts.length === 0) {

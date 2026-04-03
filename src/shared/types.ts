@@ -12,6 +12,8 @@ export interface Channel {
 export interface ChannelFilter {
   genres?: string[];
   tags?: string[];
+  excludeGenres?: string[];
+  excludeTags?: string[];
   titleMatch?: string;
   libraryIds?: string[];
   itemTypes?: ("Movie" | "Episode")[];

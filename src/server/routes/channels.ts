@@ -1,6 +1,7 @@
 import { Router } from "express";
 import db, { rowToChannel, type ChannelRow } from "../db.js";
 import { newId } from "../utils.js";
+import { invalidateSchedule } from "../schedule.js";
 import type { Channel } from "../../shared/types.js";
 
 export const channelRouter = Router();
@@ -103,6 +104,7 @@ channelRouter.put("/:id", (req, res) => {
     `).run(updated.name, updated.number, updated.filters, updated.shuffle_mode, updated.stream_mode, updated.audio_language, updated.logo_url, req.params.id);
 
     const row = db.prepare("SELECT * FROM channels WHERE id = ?").get(req.params.id) as ChannelRow;
+    invalidateSchedule(req.params.id);
     res.json({ channel: rowToChannel(row) });
   } catch (err: unknown) {
     if (err instanceof Error && (err as Error & { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
@@ -120,6 +122,7 @@ channelRouter.delete("/:id", (req, res) => {
     res.status(404).json({ error: "Channel not found" });
     return;
   }
+  invalidateSchedule(req.params.id);
   res.json({ deleted: req.params.id });
 });
 

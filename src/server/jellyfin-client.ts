@@ -12,7 +12,7 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
 
   // If titleMatch is set, find matching series/movies first, then get their episodes
   if (filter.titleMatch) {
-    return fetchByTitleMatch(filter, limit);
+    return applyExclusions(await fetchByTitleMatch(filter, limit), filter);
   }
 
   const params = new URLSearchParams();
@@ -44,7 +44,7 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
         }
       }
     }
-    return allItems.slice(0, limit);
+    return applyExclusions(allItems.slice(0, limit), filter);
   }
 
   if (filter.genres?.length === 1) {
@@ -52,17 +52,19 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
   }
 
   // Query per library or all
+  let items: JellyfinItem[];
   if (filter.libraryIds?.length) {
     const allItems: JellyfinItem[] = [];
     for (const libId of filter.libraryIds) {
       params.set("parentId", libId);
-      const items = await queryItems(params);
-      allItems.push(...items);
+      allItems.push(...await queryItems(params));
     }
-    return allItems.slice(0, limit);
+    items = allItems.slice(0, limit);
+  } else {
+    items = await queryItems(params);
   }
 
-  return queryItems(params);
+  return applyExclusions(items, filter);
 }
 
 // Query across library IDs (or all libraries if none specified)
@@ -154,6 +156,20 @@ async function queryItemsRaw(params: URLSearchParams): Promise<JellyfinItem[]> {
   } catch {
     return [];
   }
+}
+
+// Client-side exclusion filtering (Jellyfin API doesn't support excludes)
+function applyExclusions(items: JellyfinItem[], filter: ChannelFilter): JellyfinItem[] {
+  if (!filter.excludeGenres?.length && !filter.excludeTags?.length) return items;
+
+  const exGenres = new Set((filter.excludeGenres || []).map(g => g.toLowerCase()));
+  const exTags = new Set((filter.excludeTags || []).map(t => t.toLowerCase()));
+
+  return items.filter(item => {
+    if (exGenres.size > 0 && item.Genres?.some(g => exGenres.has(g.toLowerCase()))) return false;
+    if (exTags.size > 0 && item.Tags?.some(t => exTags.has(t.toLowerCase()))) return false;
+    return true;
+  });
 }
 
 function shuffleArray<T>(arr: T[]): T[] {
