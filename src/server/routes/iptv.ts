@@ -134,9 +134,9 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
 });
 
 // Stream endpoint — continuously chains episodes for seamless live TV
-// Streams one episode at a time and re-checks the schedule clock between episodes.
-// This prevents drift: if transcode latency causes us to fall behind the EPG,
-// the next episode lookup snaps back to what should be playing NOW.
+// Uses a hybrid approach: concat demuxer for gapless transitions (current + next episode),
+// then re-checks the wall clock and builds the next batch. This avoids the stream-ending
+// gap that occurs with single-episode ffmpeg processes while still self-correcting drift.
 iptvRouter.get("/stream/:channelId", async (req, res) => {
   const channel = findChannel(req, res);
   if (!channel) return;
@@ -154,50 +154,69 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   let closed = false;
   req.on("close", () => { closed = true; });
 
-  // Stream episodes in a loop, re-checking the schedule each time
+  // How many episodes to concat per ffmpeg batch. Higher = fewer gaps but more drift.
+  // 3 is a good balance: ~1-2 hours per batch, drift self-corrects between batches.
+  const BATCH_SIZE = 3;
+
   const streamLoop = async () => {
     while (!closed && !res.writableEnded) {
       const current = await getCurrentSlot(channel);
       if (!current) {
-        // No content scheduled — wait and retry
         await sleep(5000);
         continue;
       }
 
-      const { slot, offsetSeconds } = current;
-      const remainingSeconds = (new Date(slot.endTime).getTime() - Date.now()) / 1000;
+      const { slot: currentSlot, offsetSeconds } = current;
+      const remainingSeconds = (new Date(currentSlot.endTime).getTime() - Date.now()) / 1000;
 
-      // Skip slots with less than 5 seconds remaining — not worth starting a transcode
       if (remainingSeconds < 5) {
         await sleep(2000);
         continue;
       }
 
-      const params = new URLSearchParams({
-        api_key: apiKey,
-        VideoCodec: "h264",
-        AudioCodec: "aac",
-        AudioChannels: "2",
-        MaxStreamingBitrate: "20000000",
-        VideoBitRate: "8000000",
-        AudioBitRate: "192000",
-        MaxWidth: "1920",
-        MaxHeight: "1080",
-        AudioStreamIndex: "0",
-      });
-      if (offsetSeconds > 0) {
-        params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
+      // Build a batch: current slot + next N-1 slots from the schedule
+      const schedule = await getSchedule(channel);
+      const now = new Date().toISOString();
+      const currentIdx = schedule.findIndex(
+        (s) => s.startTime <= now && s.endTime > now,
+      );
+      const batchSlots = currentIdx >= 0
+        ? schedule.slice(currentIdx, currentIdx + BATCH_SIZE)
+        : [currentSlot];
+
+      // Build concat playlist with all batch slots
+      const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
+      const concatFile = join(tempDir, "playlist.txt");
+      let concatContent = "";
+
+      for (let i = 0; i < batchSlots.length; i++) {
+        const bSlot = batchSlots[i];
+        const params = new URLSearchParams({
+          api_key: apiKey,
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+          AudioChannels: "2",
+          MaxStreamingBitrate: "20000000",
+          VideoBitRate: "8000000",
+          AudioBitRate: "192000",
+          MaxWidth: "1920",
+          MaxHeight: "1080",
+          AudioStreamIndex: "0",
+        });
+        // Only seek into the first slot (it's already in progress)
+        if (i === 0 && offsetSeconds > 0) {
+          params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
+        }
+        const url = `${jellyfinUrl}/Videos/${bSlot.itemId}/stream.ts?${params.toString()}`;
+        concatContent += `file '${url.replace(/'/g, "'\\''")}'\n`;
       }
+      writeFileSync(concatFile, concatContent);
 
-      const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream.ts?${params.toString()}`;
-      console.log(`[stream] ${channel.name}: playing "${slot.title}" (offset ${offsetSeconds}s, remaining ${Math.round(remainingSeconds)}s)`);
+      const titles = batchSlots.map((s) => s.title).join(" → ");
+      console.log(`[stream] ${channel.name}: batch of ${batchSlots.length} — ${titles} (offset ${offsetSeconds}s)`);
 
-      // Stream this single episode via ffmpeg until it ends or the slot time expires
+      // Stream this batch via ffmpeg concat — gapless transitions between episodes
       await new Promise<void>((resolve) => {
-        const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
-        const concatFile = join(tempDir, "playlist.txt");
-        writeFileSync(concatFile, `file '${streamUrl.replace(/'/g, "'\\''")}'\n`);
-
         const ffmpegArgs = [
           "-fflags", "+igndts+genpts+discardcorrupt",
           "-f", "concat",
@@ -224,14 +243,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         const streamId = trackStreamStart(channel.id);
         const stderrChunks: Buffer[] = [];
 
-        // Kill ffmpeg when the slot's scheduled end time arrives
-        const slotEndMs = new Date(slot.endTime).getTime() - Date.now();
-        const slotTimer = setTimeout(() => {
-          ffmpeg.kill("SIGTERM");
-        }, Math.max(slotEndMs, 0));
-
         const onClose = () => {
-          clearTimeout(slotTimer);
           ffmpeg.kill("SIGTERM");
         };
         req.on("close", onClose);
@@ -250,11 +262,10 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
 
         ffmpeg.on("close", (code) => {
           trackStreamEnd(streamId, code);
-          clearTimeout(slotTimer);
           req.removeListener("close", onClose);
           if (code !== 0 && code !== null && !closed) {
             const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
-            const errMsg = `ffmpeg exited ${code} for ${channel.name} "${slot.title}"`;
+            const errMsg = `ffmpeg exited ${code} for ${channel.name}`;
             console.error(`[stream] ${errMsg}\n[stream] stderr: ${stderrTail}`);
             trackError(`${errMsg} — ${stderrTail}`);
           }
@@ -263,6 +274,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
           resolve();
         });
       });
+      // ffmpeg exited naturally (batch finished) — loop re-checks the clock
     }
 
     if (!res.writableEnded) res.end();
