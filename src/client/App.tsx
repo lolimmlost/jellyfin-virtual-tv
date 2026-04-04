@@ -75,6 +75,17 @@ function formatDateHeader(iso: string): string {
   return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 }
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // ── Main App ────────────────────────────────────────────────────
 
 export default function App() {
@@ -82,6 +93,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState<{ connected: boolean; serverName?: string } | null>(null);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const isMobile = useIsMobile();
 
   const selectedChannel = channels.find((c) => c.id === selectedId) || null;
 
@@ -194,7 +207,7 @@ export default function App() {
       {/* Header */}
       <header style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "16px 24px", borderBottom: `4px solid ${c.border}`, background: c.bg,
+        padding: isMobile ? "12px 16px" : "16px 24px", borderBottom: `4px solid ${c.border}`, background: c.bg,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <h1 style={{
@@ -219,7 +232,10 @@ export default function App() {
       <div style={{ display: "flex", height: "calc(100vh - 61px)" }}>
         {/* Left panel: Channel list */}
         <div style={{
-          width: 300, borderRight: `4px solid ${c.border}`, display: "flex", flexDirection: "column",
+          width: isMobile ? "100%" : 300,
+          borderRight: isMobile ? "none" : `4px solid ${c.border}`,
+          display: (isMobile && !showSidebar) ? "none" : "flex",
+          flexDirection: "column",
           background: c.bg,
         }}>
           <div style={{ padding: 16 }}>
@@ -233,7 +249,7 @@ export default function App() {
               return (
                 <div
                   key={ch.id}
-                  onClick={() => { setSelectedId(ch.id); setEditing(false); }}
+                  onClick={() => { setSelectedId(ch.id); setEditing(false); if (isMobile) setShowSidebar(false); }}
                   style={{
                     padding: "12px 16px", cursor: "pointer",
                     background: active ? c.surface : "transparent",
@@ -270,7 +286,22 @@ export default function App() {
         </div>
 
         {/* Right panel */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+        <div style={{
+          flex: 1, overflowY: "auto", padding: isMobile ? 16 : 24,
+          display: (isMobile && showSidebar) ? "none" : "block",
+        }}>
+          {isMobile && selectedChannel && (
+            <button
+              onClick={() => setShowSidebar(true)}
+              style={{
+                ...buttonStyle, marginBottom: 16, padding: "8px 14px",
+                background: c.surface, color: c.text, fontSize: 12,
+                boxShadow: `2px 2px 0px 0px ${c.border}`,
+              }}
+            >
+              ← Channels
+            </button>
+          )}
           {selectedChannel && !editing && (
             <ChannelDetail
               channel={selectedChannel}
