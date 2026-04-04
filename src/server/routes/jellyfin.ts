@@ -105,7 +105,14 @@ jellyfinRouter.get("/items", async (req, res) => {
   }
 
   try {
-    const url = `${JELLYFIN_URL}/Items?parentId=${parentId}&includeItemTypes=Movie,Episode&recursive=true&fields=Path,Genres,Tags,Overview&limit=${limit}`;
+    const params = new URLSearchParams({
+      parentId,
+      includeItemTypes: "Movie,Episode",
+      recursive: "true",
+      fields: "Path,Genres,Tags,Overview",
+      limit: String(limit),
+    });
+    const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
     const response = await fetch(url, { headers: authHeaders });
     if (!response.ok) {
       res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
