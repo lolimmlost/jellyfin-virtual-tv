@@ -3,10 +3,12 @@ import { spawn, execSync } from "child_process";
 import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot, getRemainingSlots } from "../schedule.js";
+import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
 import type { Channel } from "../../shared/types.js";
 
 export const iptvRouter = Router();
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 // Debug endpoint — check ffmpeg capabilities
 iptvRouter.get("/debug/ffmpeg", (_req, res) => {
@@ -131,16 +133,12 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
 });
 
 // Stream endpoint — continuously chains episodes for seamless live TV
-// Uses ffmpeg concat demuxer for continuous timestamps across episode boundaries
+// Streams one episode at a time and re-checks the schedule clock between episodes.
+// This prevents drift: if transcode latency causes us to fall behind the EPG,
+// the next episode lookup snaps back to what should be playing NOW.
 iptvRouter.get("/stream/:channelId", async (req, res) => {
   const channel = findChannel(req, res);
   if (!channel) return;
-
-  const slots = await getRemainingSlots(channel);
-  if (slots.length === 0) {
-    res.status(503).json({ error: "No content scheduled" });
-    return;
-  }
 
   const jellyfinUrl = process.env.JELLYFIN_URL;
   const apiKey = process.env.JELLYFIN_API_KEY;
@@ -149,98 +147,120 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
     return;
   }
 
-  // Build concat demuxer playlist file
-  // Request transcoded H264+AAC from Jellyfin (GPU-accelerated) instead of raw static files
-  // This offloads HEVC decoding to Jellyfin's GPU and ensures consistent H264 output
-  const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
-  const concatFile = join(tempDir, "playlist.txt");
-
-  let concatContent = "";
-  for (let i = 0; i < slots.length; i++) {
-    const { slot, offsetSeconds } = slots[i];
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      VideoCodec: "h264",
-      AudioCodec: "aac",
-      AudioChannels: "2",
-      MaxStreamingBitrate: "20000000",
-      VideoBitRate: "8000000",
-      AudioBitRate: "192000",
-      MaxWidth: "1920",
-      MaxHeight: "1080",
-      AudioStreamIndex: "0",
-    });
-    // Use StartTimeTicks for seeking (handled server-side by Jellyfin)
-    if (i === 0 && offsetSeconds > 0) {
-      params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
-    }
-    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream.ts?${params.toString()}`;
-    concatContent += `file '${streamUrl}'\n`;
-  }
-  writeFileSync(concatFile, concatContent);
-
-  // Jellyfin transcodes to H264+AAC — we just copy and remux to MPEG-TS
-  // Explicit -map + codec tags ensure the output PMT declares H264/AAC correctly
-  // even if the input TS metadata is ambiguous during concat transitions
-  // dump_extra re-injects SPS/PPS at every keyframe so downstream decoders can
-  // join mid-stream or survive concat transitions without "non-existing PPS" errors
-  const ffmpegArgs = [
-    "-fflags", "+igndts+genpts+discardcorrupt",
-    "-f", "concat",
-    "-safe", "0",
-    "-protocol_whitelist", "file,http,https,tcp,tls",
-    "-probesize", "1048576",
-    "-analyzeduration", "2000000",
-    "-i", concatFile,
-    "-map", "0:v:0",
-    "-map", "0:a:0",
-    "-c:v", "copy",
-    "-c:a", "copy",
-    "-bsf:v", "dump_extra=freq=keyframe",
-    "-tag:v", "avc1",
-    "-f", "mpegts",
-    "-mpegts_flags", "resend_headers",
-    "-flush_packets", "1",
-    "pipe:1",
-  ];
-
-  const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  // Send headers immediately so Jellyfin's probe can start reading right away
   res.setHeader("Content-Type", "video/mp2t");
   res.setHeader("Transfer-Encoding", "chunked");
 
-  req.on("close", () => {
-    ffmpeg.kill("SIGTERM");
-  });
+  let closed = false;
+  req.on("close", () => { closed = true; });
 
-  ffmpeg.stdout.on("data", (chunk: Buffer) => {
-    if (!res.writableEnded) {
-      res.write(chunk);
-    } else {
-      ffmpeg.kill("SIGTERM");
-    }
-  });
+  // Stream episodes in a loop, re-checking the schedule each time
+  const streamLoop = async () => {
+    while (!closed && !res.writableEnded) {
+      const current = await getCurrentSlot(channel);
+      if (!current) {
+        // No content scheduled — wait and retry
+        await sleep(5000);
+        continue;
+      }
 
-  let stderrBuf = "";
-  ffmpeg.stderr.on("data", (chunk: Buffer) => {
-    stderrBuf += chunk.toString();
-    // Log first 2000 chars of stderr for debugging, then just consume
-    if (stderrBuf.length <= 2000) {
-      // Will be logged on close
-    }
-  });
+      const { slot, offsetSeconds } = current;
+      const remainingSeconds = (new Date(slot.endTime).getTime() - Date.now()) / 1000;
 
-  ffmpeg.on("close", (code) => {
-    if (code !== 0 && code !== null) {
-      console.error(`[stream] ffmpeg exited with code ${code} for channel ${channel.name}`);
-      console.error(`[stream] ffmpeg stderr: ${stderrBuf.slice(0, 2000)}`);
+      // Skip slots with less than 5 seconds remaining — not worth starting a transcode
+      if (remainingSeconds < 5) {
+        await sleep(2000);
+        continue;
+      }
+
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        VideoCodec: "h264",
+        AudioCodec: "aac",
+        AudioChannels: "2",
+        MaxStreamingBitrate: "20000000",
+        VideoBitRate: "8000000",
+        AudioBitRate: "192000",
+        MaxWidth: "1920",
+        MaxHeight: "1080",
+        AudioStreamIndex: "0",
+      });
+      if (offsetSeconds > 0) {
+        params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
+      }
+
+      const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream.ts?${params.toString()}`;
+      console.log(`[stream] ${channel.name}: playing "${slot.title}" (offset ${offsetSeconds}s, remaining ${Math.round(remainingSeconds)}s)`);
+
+      // Stream this single episode via ffmpeg until it ends or the slot time expires
+      await new Promise<void>((resolve) => {
+        const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
+        const concatFile = join(tempDir, "playlist.txt");
+        writeFileSync(concatFile, `file '${streamUrl}'\n`);
+
+        const ffmpegArgs = [
+          "-fflags", "+igndts+genpts+discardcorrupt",
+          "-f", "concat",
+          "-safe", "0",
+          "-protocol_whitelist", "file,http,https,tcp,tls",
+          "-probesize", "1048576",
+          "-analyzeduration", "2000000",
+          "-i", concatFile,
+          "-map", "0:v:0",
+          "-map", "0:a:0",
+          "-c:v", "copy",
+          "-c:a", "copy",
+          "-bsf:v", "dump_extra=freq=keyframe",
+          "-tag:v", "avc1",
+          "-f", "mpegts",
+          "-mpegts_flags", "resend_headers",
+          "-flush_packets", "1",
+          "pipe:1",
+        ];
+
+        const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        // Kill ffmpeg when the slot's scheduled end time arrives
+        const slotEndMs = new Date(slot.endTime).getTime() - Date.now();
+        const slotTimer = setTimeout(() => {
+          ffmpeg.kill("SIGTERM");
+        }, Math.max(slotEndMs, 0));
+
+        const onClose = () => {
+          clearTimeout(slotTimer);
+          ffmpeg.kill("SIGTERM");
+        };
+        req.on("close", onClose);
+
+        ffmpeg.stdout.on("data", (chunk: Buffer) => {
+          if (!res.writableEnded && !closed) {
+            res.write(chunk);
+          } else {
+            ffmpeg.kill("SIGTERM");
+          }
+        });
+
+        ffmpeg.stderr.on("data", () => {}); // consume stderr
+
+        ffmpeg.on("close", (code) => {
+          clearTimeout(slotTimer);
+          req.removeListener("close", onClose);
+          if (code !== 0 && code !== null && !closed) {
+            console.error(`[stream] ffmpeg exited ${code} for ${channel.name} "${slot.title}"`);
+          }
+          try { unlinkSync(concatFile); } catch {}
+          try { unlinkSync(tempDir); } catch {}
+          resolve();
+        });
+      });
     }
-    // Clean up temp concat file
-    try { unlinkSync(concatFile); } catch {}
-    try { unlinkSync(tempDir); } catch {}
+
+    if (!res.writableEnded) res.end();
+  };
+
+  streamLoop().catch((err) => {
+    console.error(`[stream] loop error for ${channel.name}:`, err);
     if (!res.writableEnded) res.end();
   });
 });
