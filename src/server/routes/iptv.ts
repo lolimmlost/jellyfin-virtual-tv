@@ -196,7 +196,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
       await new Promise<void>((resolve) => {
         const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
         const concatFile = join(tempDir, "playlist.txt");
-        writeFileSync(concatFile, `file '${streamUrl}'\n`);
+        writeFileSync(concatFile, `file '${streamUrl.replace(/'/g, "'\\''")}'\n`);
 
         const ffmpegArgs = [
           "-fflags", "+igndts+genpts+discardcorrupt",
