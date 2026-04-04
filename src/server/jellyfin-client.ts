@@ -190,10 +190,14 @@ async function queryItems(params: URLSearchParams): Promise<JellyfinItem[]> {
   try {
     const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
     const response = await fetch(url, { headers: authHeaders });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.warn(`[jellyfin] query failed with status ${response.status}: ${url}`);
+      return [];
+    }
     const data = await response.json();
     return (data.Items || []).filter((item: JellyfinItem) => item.RunTimeTicks > 0);
-  } catch {
+  } catch (err) {
+    console.warn(`[jellyfin] query error:`, err instanceof Error ? err.message : err);
     return [];
   }
 }
@@ -202,10 +206,14 @@ async function queryItemsRaw(params: URLSearchParams): Promise<JellyfinItem[]> {
   try {
     const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
     const response = await fetch(url, { headers: authHeaders });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.warn(`[jellyfin] query failed with status ${response.status}: ${url}`);
+      return [];
+    }
     const data = await response.json();
     return data.Items || [];
-  } catch {
+  } catch (err) {
+    console.warn(`[jellyfin] query error:`, err instanceof Error ? err.message : err);
     return [];
   }
 }
@@ -224,11 +232,3 @@ function applyExclusions(items: JellyfinItem[], filter: ChannelFilter): Jellyfin
   });
 }
 
-function shuffleArray<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}

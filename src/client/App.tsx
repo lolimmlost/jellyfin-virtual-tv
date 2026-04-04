@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Channel, ChannelFilter, JellyfinLibrary, ScheduleSlot } from "../shared/types";
 
 // ── Neo-Brutalism Dark ──────────────────────────────────────────
