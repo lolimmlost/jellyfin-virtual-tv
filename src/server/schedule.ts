@@ -122,25 +122,6 @@ export async function getCurrentSlot(channel: Channel): Promise<{ slot: Schedule
   return null;
 }
 
-// Get the current slot + all remaining slots in the schedule
-export async function getRemainingSlots(channel: Channel): Promise<{ slot: ScheduleSlot; offsetSeconds: number }[]> {
-  const schedule = await getSchedule(channel);
-  const now = new Date().toISOString();
-  const remaining: { slot: ScheduleSlot; offsetSeconds: number }[] = [];
-
-  for (const slot of schedule) {
-    if (slot.endTime <= now) continue;
-    if (slot.startTime <= now) {
-      const offsetMs = Date.now() - new Date(slot.startTime).getTime();
-      remaining.push({ slot, offsetSeconds: Math.floor(offsetMs / 1000) });
-    } else {
-      remaining.push({ slot, offsetSeconds: 0 });
-    }
-  }
-
-  return remaining;
-}
-
 // Deterministic shuffle based on a seed string
 function shuffleDeterministic(items: JellyfinItem[], seed: string): JellyfinItem[] {
   const arr = [...items];
