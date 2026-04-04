@@ -86,6 +86,16 @@ export function invalidateAllSchedules() {
   scheduleCache.clear();
 }
 
+export function getScheduleCacheStats() {
+  const now = Date.now();
+  let oldestAgeMs = 0;
+  for (const entry of scheduleCache.values()) {
+    const age = now - entry.generatedAt;
+    if (age > oldestAgeMs) oldestAgeMs = age;
+  }
+  return { cached: scheduleCache.size, oldestAgeMs };
+}
+
 export function getAllChannels(): Channel[] {
   const rows = db.prepare("SELECT * FROM channels ORDER BY number ASC").all() as ChannelRow[];
   return rows.map(rowToChannel);
