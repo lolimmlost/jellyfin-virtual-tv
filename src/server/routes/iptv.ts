@@ -4,6 +4,7 @@ import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
+import { trackStreamStart, trackStreamEnd, trackError } from "../runtime-stats.js";
 import type { Channel } from "../../shared/types.js";
 
 export const iptvRouter = Router();
@@ -220,6 +221,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
           stdio: ["ignore", "pipe", "pipe"],
         });
+        const streamId = trackStreamStart(channel.id);
 
         // Kill ffmpeg when the slot's scheduled end time arrives
         const slotEndMs = new Date(slot.endTime).getTime() - Date.now();
@@ -244,10 +246,13 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         ffmpeg.stderr.on("data", () => {}); // consume stderr
 
         ffmpeg.on("close", (code) => {
+          trackStreamEnd(streamId, code);
           clearTimeout(slotTimer);
           req.removeListener("close", onClose);
           if (code !== 0 && code !== null && !closed) {
-            console.error(`[stream] ffmpeg exited ${code} for ${channel.name} "${slot.title}"`);
+            const errMsg = `ffmpeg exited ${code} for ${channel.name} "${slot.title}"`;
+            console.error(`[stream] ${errMsg}`);
+            trackError(errMsg);
           }
           try { unlinkSync(concatFile); } catch {}
           try { unlinkSync(tempDir); } catch {}
