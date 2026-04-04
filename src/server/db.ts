@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { mkdirSync } from "fs";
+import type { Channel, ChannelFilter } from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,4 +31,39 @@ db.exec(`
   )
 `);
 
+// Migrations
+const migrations = [
+  `ALTER TABLE channels ADD COLUMN stream_mode TEXT NOT NULL DEFAULT 'transcode'`,
+  `ALTER TABLE channels ADD COLUMN audio_language TEXT NOT NULL DEFAULT 'eng'`,
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch { /* Column already exists */ }
+}
+
 export default db;
+
+export interface ChannelRow {
+  id: string;
+  name: string;
+  number: number;
+  filters: string;
+  shuffle_mode: string;
+  stream_mode: string;
+  audio_language: string;
+  logo_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function rowToChannel(row: ChannelRow): Channel {
+  return {
+    id: row.id,
+    name: row.name,
+    number: row.number,
+    filters: JSON.parse(row.filters) as ChannelFilter,
+    shuffleMode: row.shuffle_mode as Channel["shuffleMode"],
+    streamMode: (row.stream_mode || "transcode") as Channel["streamMode"],
+    audioLanguage: row.audio_language || "eng",
+    logoUrl: row.logo_url ?? undefined,
+  };
+}

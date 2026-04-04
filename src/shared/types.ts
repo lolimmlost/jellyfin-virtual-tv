@@ -4,12 +4,16 @@ export interface Channel {
   number: number;
   filters: ChannelFilter;
   shuffleMode: "random" | "sequential";
+  streamMode: "transcode" | "copy";
+  audioLanguage: string;
   logoUrl?: string;
 }
 
 export interface ChannelFilter {
   genres?: string[];
   tags?: string[];
+  excludeGenres?: string[];
+  excludeTags?: string[];
   titleMatch?: string;
   libraryIds?: string[];
   itemTypes?: ("Movie" | "Episode")[];

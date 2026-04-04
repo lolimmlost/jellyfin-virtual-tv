@@ -1,8 +1,40 @@
-import { Router } from "express";
-import { spawn, type ChildProcess } from "child_process";
-import { getAllChannels, getSchedule, getCurrentSlot, getRemainingSlots } from "../schedule.js";
+import { Router, type Request, type Response } from "express";
+import { spawn, execSync } from "child_process";
+import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
+import type { Channel } from "../../shared/types.js";
 
 export const iptvRouter = Router();
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// Debug endpoint — check ffmpeg capabilities
+iptvRouter.get("/debug/ffmpeg", (_req, res) => {
+  try {
+    const version = execSync("ffmpeg -version 2>&1").toString().split("\n")[0];
+    const decoders = execSync("ffmpeg -decoders 2>/dev/null").toString();
+    const encoders = execSync("ffmpeg -encoders 2>/dev/null").toString();
+    const hevcDec = decoders.split("\n").filter(l => /hevc|h265/i.test(l));
+    const h264Dec = decoders.split("\n").filter(l => /h264|h\.264/i.test(l));
+    const h264Enc = encoders.split("\n").filter(l => /libx264/i.test(l));
+    res.json({ version, hevcDecoders: hevcDec, h264Decoders: h264Dec, h264Encoders: h264Enc });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+function findChannel(req: Request, res: Response): Channel | null {
+  // Strip .ts extension if present (used in M3U URLs for Jellyfin format detection)
+  const channelId = req.params.channelId.replace(/\.ts$/, "");
+  const channel = getAllChannels().find((c) => c.id === channelId);
+  if (!channel) {
+    res.status(404).json({ error: "Channel not found" });
+    return null;
+  }
+  return channel;
+}
 
 // M3U playlist — Jellyfin adds this as an IPTV tuner
 iptvRouter.get("/channels.m3u", async (req, res) => {
@@ -13,9 +45,18 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
   let m3u = "#EXTM3U\n\n";
 
   for (const ch of channels) {
-    const logoParam = ch.logoUrl ? ` tvg-logo="${ch.logoUrl}"` : "";
+    // Use custom logo, or fall back to the currently-playing item's image
+    let logoUrl = ch.logoUrl;
+    if (!logoUrl) {
+      const current = await getCurrentSlot(ch);
+      const img = current?.slot.imageUrl || (await getFirstSlot(ch))?.imageUrl;
+      if (img) logoUrl = img;
+    }
+    const logoParam = logoUrl ? ` tvg-logo="${logoUrl}"` : "";
     m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${ch.name}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
-    m3u += `${baseUrl}/iptv/stream/${ch.id}\n\n`;
+    // ?f= is a format version that busts Jellyfin's probe cache when our stream format changes
+    // Bump this number whenever the stream encoding pipeline changes (e.g., passthrough → GPU transcode)
+    m3u += `${baseUrl}/iptv/stream/${ch.id}.ts?f=3\n\n`;
   }
 
   res.setHeader("Content-Type", "audio/x-mpegurl");
@@ -64,12 +105,8 @@ iptvRouter.get("/epg.xml", async (_req, res) => {
 
 // Schedule API — preview what's on
 iptvRouter.get("/schedule/:channelId", async (req, res) => {
-  const channels = getAllChannels();
-  const channel = channels.find((c) => c.id === req.params.channelId);
-  if (!channel) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
-  }
+  const channel = findChannel(req, res);
+  if (!channel) return;
 
   const slots = await getSchedule(channel);
   res.json({ channel: channel.name, slots });
@@ -77,12 +114,8 @@ iptvRouter.get("/schedule/:channelId", async (req, res) => {
 
 // What's on now
 iptvRouter.get("/now/:channelId", async (req, res) => {
-  const channels = getAllChannels();
-  const channel = channels.find((c) => c.id === req.params.channelId);
-  if (!channel) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
-  }
+  const channel = findChannel(req, res);
+  if (!channel) return;
 
   const current = await getCurrentSlot(channel);
   if (!current) {
@@ -100,19 +133,12 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
 });
 
 // Stream endpoint — continuously chains episodes for seamless live TV
+// Streams one episode at a time and re-checks the schedule clock between episodes.
+// This prevents drift: if transcode latency causes us to fall behind the EPG,
+// the next episode lookup snaps back to what should be playing NOW.
 iptvRouter.get("/stream/:channelId", async (req, res) => {
-  const channels = getAllChannels();
-  const channel = channels.find((c) => c.id === req.params.channelId);
-  if (!channel) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
-  }
-
-  const slots = await getRemainingSlots(channel);
-  if (slots.length === 0) {
-    res.status(503).json({ error: "No content scheduled" });
-    return;
-  }
+  const channel = findChannel(req, res);
+  if (!channel) return;
 
   const jellyfinUrl = process.env.JELLYFIN_URL;
   const apiKey = process.env.JELLYFIN_API_KEY;
@@ -124,56 +150,119 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   res.setHeader("Content-Type", "video/mp2t");
   res.setHeader("Transfer-Encoding", "chunked");
 
-  let cancelled = false;
-  let currentFfmpeg: ChildProcess | null = null;
+  let closed = false;
+  req.on("close", () => { closed = true; });
 
-  req.on("close", () => {
-    cancelled = true;
-    if (currentFfmpeg) currentFfmpeg.kill("SIGTERM");
-  });
+  // Stream episodes in a loop, re-checking the schedule each time
+  const streamLoop = async () => {
+    while (!closed && !res.writableEnded) {
+      const current = await getCurrentSlot(channel);
+      if (!current) {
+        // No content scheduled — wait and retry
+        await sleep(5000);
+        continue;
+      }
 
-  for (let i = 0; i < slots.length; i++) {
-    if (cancelled || res.writableEnded) break;
+      const { slot, offsetSeconds } = current;
+      const remainingSeconds = (new Date(slot.endTime).getTime() - Date.now()) / 1000;
 
-    const { slot, offsetSeconds } = slots[i];
-    const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream?static=true&api_key=${apiKey}`;
+      // Skip slots with less than 5 seconds remaining — not worth starting a transcode
+      if (remainingSeconds < 5) {
+        await sleep(2000);
+        continue;
+      }
 
-    const ffmpegArgs = [
-      "-ss", String(offsetSeconds),
-      "-i", streamUrl,
-      "-c", "copy",
-      "-f", "mpegts",
-      "-fflags", "+genpts",
-      "pipe:1",
-    ];
-
-    await new Promise<void>((resolve) => {
-      const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
-        stdio: ["ignore", "pipe", "pipe"],
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        VideoCodec: "h264",
+        AudioCodec: "aac",
+        AudioChannels: "2",
+        MaxStreamingBitrate: "20000000",
+        VideoBitRate: "8000000",
+        AudioBitRate: "192000",
+        MaxWidth: "1920",
+        MaxHeight: "1080",
+        AudioStreamIndex: "0",
       });
-      currentFfmpeg = ffmpeg;
+      if (offsetSeconds > 0) {
+        params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
+      }
 
-      ffmpeg.stdout.on("data", (chunk: Buffer) => {
-        if (!res.writableEnded) {
-          res.write(chunk);
-        } else {
+      const streamUrl = `${jellyfinUrl}/Videos/${slot.itemId}/stream.ts?${params.toString()}`;
+      console.log(`[stream] ${channel.name}: playing "${slot.title}" (offset ${offsetSeconds}s, remaining ${Math.round(remainingSeconds)}s)`);
+
+      // Stream this single episode via ffmpeg until it ends or the slot time expires
+      await new Promise<void>((resolve) => {
+        const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
+        const concatFile = join(tempDir, "playlist.txt");
+        writeFileSync(concatFile, `file '${streamUrl}'\n`);
+
+        const ffmpegArgs = [
+          "-fflags", "+igndts+genpts+discardcorrupt",
+          "-f", "concat",
+          "-safe", "0",
+          "-protocol_whitelist", "file,http,https,tcp,tls",
+          "-probesize", "1048576",
+          "-analyzeduration", "2000000",
+          "-i", concatFile,
+          "-map", "0:v:0",
+          "-map", "0:a:0",
+          "-c:v", "copy",
+          "-c:a", "copy",
+          "-bsf:v", "dump_extra=freq=keyframe",
+          "-tag:v", "avc1",
+          "-f", "mpegts",
+          "-mpegts_flags", "resend_headers",
+          "-flush_packets", "1",
+          "pipe:1",
+        ];
+
+        const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        // Kill ffmpeg when the slot's scheduled end time arrives
+        const slotEndMs = new Date(slot.endTime).getTime() - Date.now();
+        const slotTimer = setTimeout(() => {
           ffmpeg.kill("SIGTERM");
-        }
-      });
+        }, Math.max(slotEndMs, 0));
 
-      ffmpeg.stderr.on("data", () => {
-        // Consume stderr to prevent buffer overflow
-      });
+        const onClose = () => {
+          clearTimeout(slotTimer);
+          ffmpeg.kill("SIGTERM");
+        };
+        req.on("close", onClose);
 
-      ffmpeg.on("error", () => resolve());
-      ffmpeg.on("close", () => {
-        currentFfmpeg = null;
-        resolve();
-      });
-    });
-  }
+        ffmpeg.stdout.on("data", (chunk: Buffer) => {
+          if (!res.writableEnded && !closed) {
+            res.write(chunk);
+          } else {
+            ffmpeg.kill("SIGTERM");
+          }
+        });
 
-  if (!res.writableEnded) res.end();
+        ffmpeg.stderr.on("data", () => {}); // consume stderr
+
+        ffmpeg.on("close", (code) => {
+          clearTimeout(slotTimer);
+          req.removeListener("close", onClose);
+          if (code !== 0 && code !== null && !closed) {
+            console.error(`[stream] ffmpeg exited ${code} for ${channel.name} "${slot.title}"`);
+          }
+          try { unlinkSync(concatFile); } catch {}
+          try { unlinkSync(tempDir); } catch {}
+          resolve();
+        });
+      });
+    }
+
+    if (!res.writableEnded) res.end();
+  };
+
+  streamLoop().catch((err) => {
+    console.error(`[stream] loop error for ${channel.name}:`, err);
+    if (!res.writableEnded) res.end();
+  });
 });
 
 // Format date as XMLTV format: "20260401120000 +0000"

@@ -1,6 +1,6 @@
 import type { Channel, ScheduleSlot, JellyfinItem } from "../shared/types.js";
 import { fetchItemsForFilter } from "./jellyfin-client.js";
-import db from "./db.js";
+import db, { rowToChannel, type ChannelRow } from "./db.js";
 
 // In-memory schedule cache: channelId -> { slots, generatedAt }
 const scheduleCache = new Map<string, { slots: ScheduleSlot[]; generatedAt: number }>();
@@ -87,15 +87,14 @@ export function invalidateAllSchedules() {
 }
 
 export function getAllChannels(): Channel[] {
-  const rows = db.prepare("SELECT * FROM channels ORDER BY number ASC").all();
-  return rows.map((row: any) => ({
-    id: row.id,
-    name: row.name,
-    number: row.number,
-    filters: JSON.parse(row.filters),
-    shuffleMode: row.shuffle_mode,
-    logoUrl: row.logo_url,
-  }));
+  const rows = db.prepare("SELECT * FROM channels ORDER BY number ASC").all() as ChannelRow[];
+  return rows.map(rowToChannel);
+}
+
+// Get the first slot in the schedule (for channel logo fallback)
+export async function getFirstSlot(channel: Channel): Promise<ScheduleSlot | null> {
+  const schedule = await getSchedule(channel);
+  return schedule[0] || null;
 }
 
 // Get the schedule slot that should be playing right now
