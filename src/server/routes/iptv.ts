@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { spawn, execSync } from "child_process";
-import { writeFileSync, unlinkSync, mkdtempSync } from "fs";
+import { writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
@@ -255,7 +255,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
             trackError(errMsg);
           }
           try { unlinkSync(concatFile); } catch {}
-          try { unlinkSync(tempDir); } catch {}
+          try { rmdirSync(tempDir); } catch {}
           resolve();
         });
       });
