@@ -222,6 +222,7 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
           stdio: ["ignore", "pipe", "pipe"],
         });
         const streamId = trackStreamStart(channel.id);
+        const stderrChunks: Buffer[] = [];
 
         // Kill ffmpeg when the slot's scheduled end time arrives
         const slotEndMs = new Date(slot.endTime).getTime() - Date.now();
@@ -243,16 +244,19 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
           }
         });
 
-        ffmpeg.stderr.on("data", () => {}); // consume stderr
+        ffmpeg.stderr.on("data", (chunk: Buffer) => {
+          stderrChunks.push(chunk);
+        });
 
         ffmpeg.on("close", (code) => {
           trackStreamEnd(streamId, code);
           clearTimeout(slotTimer);
           req.removeListener("close", onClose);
           if (code !== 0 && code !== null && !closed) {
+            const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
             const errMsg = `ffmpeg exited ${code} for ${channel.name} "${slot.title}"`;
-            console.error(`[stream] ${errMsg}`);
-            trackError(errMsg);
+            console.error(`[stream] ${errMsg}\n[stream] stderr: ${stderrTail}`);
+            trackError(`${errMsg} — ${stderrTail}`);
           }
           try { unlinkSync(concatFile); } catch {}
           try { rmdirSync(tempDir); } catch {}
