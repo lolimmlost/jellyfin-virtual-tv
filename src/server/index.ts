@@ -54,7 +54,9 @@ app.get("/health/detailed", async (_req, res) => {
         const info = await resp.json();
         jellyfin = { reachable: true, serverName: info.ServerName || "" };
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[health] Jellyfin unreachable:", err instanceof Error ? err.message : err);
+    }
   }
 
   res.json({
