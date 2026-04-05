@@ -2,7 +2,8 @@ import { Router } from "express";
 import db, { rowToChannel, type ChannelRow } from "../db.js";
 import { newId } from "../utils.js";
 import { invalidateSchedule } from "../schedule.js";
-import type { Channel } from "../../shared/types.js";
+import { fetchItemsForFilter } from "../jellyfin-client.js";
+import type { Channel, ChannelFilter } from "../../shared/types.js";
 
 export const channelRouter = Router();
 
@@ -113,6 +114,23 @@ channelRouter.put("/:id", (req, res) => {
     }
     throw err;
   }
+});
+
+// Preview filter results — returns count + sample items without creating a channel
+channelRouter.post("/preview", async (req, res) => {
+  const filters = (req.body.filters || {}) as ChannelFilter;
+  const items = await fetchItemsForFilter(filters, 50);
+  res.json({
+    count: items.length,
+    sample: items.slice(0, 10).map((i) => ({
+      Id: i.Id,
+      Name: i.Name,
+      Type: i.Type,
+      SeriesName: i.SeriesName,
+      ImageTags: i.ImageTags,
+      SeriesId: i.SeriesId,
+    })),
+  });
 });
 
 // Delete channel
