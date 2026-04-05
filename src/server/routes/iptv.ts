@@ -200,11 +200,13 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           if (session.streamId != null) trackStreamEnd(session.streamId, code);
           session.ffmpeg = null;
           session.streamId = null;
+          const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
           if (code !== 0 && code !== null && !session.stopping) {
-            const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
             const errMsg = `ffmpeg exited ${code} for ${channel.name} (HLS)`;
             console.error(`[hls] ${errMsg}\n[hls] stderr: ${stderrTail}`);
             trackError(`${errMsg} — ${stderrTail}`);
+          } else {
+            console.log(`[hls] ${channel.name}: ffmpeg exited code=${code}\n[hls] stderr tail: ${stderrTail.slice(-200)}`);
           }
           try { unlinkSync(concatFile); } catch {}
           resolve();
