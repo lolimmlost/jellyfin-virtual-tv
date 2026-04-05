@@ -27,8 +27,8 @@ interface HlsSession {
 
 const hlsSessions = new Map<string, HlsSession>();
 const HLS_IDLE_TIMEOUT_MS = 90_000; // Kill ffmpeg after 90s with no clients
-const HLS_SEGMENT_TIME = 4; // seconds per segment — shorter for faster initial load
-const HLS_LIST_SIZE = 15; // segments in the playlist window
+const HLS_SEGMENT_TIME = 10; // seconds per segment — longer = fewer requests, less stutter
+const HLS_LIST_SIZE = 10; // segments in the playlist window
 
 // Periodic cleanup of idle HLS sessions
 setInterval(() => {
