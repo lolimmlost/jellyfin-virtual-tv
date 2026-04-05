@@ -10,6 +10,8 @@ const authHeaders = {
   Authorization: `MediaBrowser Token="${JELLYFIN_API_KEY}"`,
 };
 
+const FETCH_TIMEOUT_MS = 15_000;
+
 jellyfinRouter.get("/status", async (_req, res) => {
   if (!JELLYFIN_URL) {
     res.json({ connected: false, error: "JELLYFIN_URL not set" });
@@ -17,7 +19,9 @@ jellyfinRouter.get("/status", async (_req, res) => {
   }
 
   try {
-    const response = await fetch(`${JELLYFIN_URL}/System/Info/Public`);
+    const response = await fetch(`${JELLYFIN_URL}/System/Info/Public`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       res.json({ connected: false, error: `Jellyfin returned ${response.status}` });
       return;
@@ -45,6 +49,7 @@ jellyfinRouter.get("/libraries", async (_req, res) => {
   try {
     const response = await fetch(`${JELLYFIN_URL}/Library/VirtualFolders`, {
       headers: authHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {
       res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
@@ -74,7 +79,7 @@ jellyfinRouter.get("/genres", async (_req, res) => {
   try {
     const response = await fetch(
       `${JELLYFIN_URL}/Genres?sortBy=SortName&sortOrder=Ascending`,
-      { headers: authHeaders },
+      { headers: authHeaders, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
     );
     if (!response.ok) {
       res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
@@ -113,7 +118,10 @@ jellyfinRouter.get("/items", async (req, res) => {
       limit: String(limit),
     });
     const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
-    const response = await fetch(url, { headers: authHeaders });
+    const response = await fetch(url, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
       return;

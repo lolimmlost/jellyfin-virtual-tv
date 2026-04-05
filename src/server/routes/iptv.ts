@@ -53,8 +53,8 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
       const img = current?.slot.imageUrl || (await getFirstSlot(ch))?.imageUrl;
       if (img) logoUrl = img;
     }
-    const logoParam = logoUrl ? ` tvg-logo="${logoUrl}"` : "";
-    m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${ch.name}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
+    const logoParam = logoUrl ? ` tvg-logo="${escapeAttr(logoUrl)}"` : "";
+    m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${escapeAttr(ch.name)}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
     // ?f= is a format version that busts Jellyfin's probe cache when our stream format changes
     // Bump this number whenever the stream encoding pipeline changes (e.g., passthrough → GPU transcode)
     m3u += `${baseUrl}/iptv/stream/${ch.id}.ts?f=3\n\n`;
@@ -242,6 +242,8 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         });
         const streamId = trackStreamStart(channel.id);
         const stderrChunks: Buffer[] = [];
+        let stderrLen = 0;
+        const STDERR_MAX = 8192;
 
         const onClose = () => {
           ffmpeg.kill("SIGTERM");
@@ -258,6 +260,11 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
 
         ffmpeg.stderr.on("data", (chunk: Buffer) => {
           stderrChunks.push(chunk);
+          stderrLen += chunk.length;
+          // Keep only the tail to avoid unbounded memory growth on long streams
+          while (stderrLen > STDERR_MAX && stderrChunks.length > 1) {
+            stderrLen -= stderrChunks.shift()!.length;
+          }
         });
 
         ffmpeg.on("close", (code) => {
@@ -290,6 +297,10 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
 function formatXmltvDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())} +0000`;
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/"/g, "'");
 }
 
 function escapeXml(s: string): string {

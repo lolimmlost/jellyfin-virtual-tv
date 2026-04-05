@@ -7,6 +7,8 @@ const authHeaders = {
   Authorization: `MediaBrowser Token="${JELLYFIN_API_KEY}"`,
 };
 
+const FETCH_TIMEOUT_MS = 15_000;
+
 export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): Promise<JellyfinItem[]> {
   if (!JELLYFIN_URL || !JELLYFIN_API_KEY) return [];
 
@@ -189,7 +191,10 @@ async function getEpisodes(seriesId: string, limit: number): Promise<JellyfinIte
 async function queryItems(params: URLSearchParams): Promise<JellyfinItem[]> {
   try {
     const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
-    const response = await fetch(url, { headers: authHeaders });
+    const response = await fetch(url, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       console.warn(`[jellyfin] query failed with status ${response.status}: ${url}`);
       return [];
@@ -205,7 +210,10 @@ async function queryItems(params: URLSearchParams): Promise<JellyfinItem[]> {
 async function queryItemsRaw(params: URLSearchParams): Promise<JellyfinItem[]> {
   try {
     const url = `${JELLYFIN_URL}/Items?${params.toString()}`;
-    const response = await fetch(url, { headers: authHeaders });
+    const response = await fetch(url, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       console.warn(`[jellyfin] query failed with status ${response.status}: ${url}`);
       return [];
