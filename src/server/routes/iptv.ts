@@ -300,7 +300,7 @@ function formatXmltvDate(d: Date): string {
 }
 
 function escapeAttr(s: string): string {
-  return s.replace(/"/g, "'");
+  return s.replace(/"/g, "'").replace(/[\n\r]/g, " ");
 }
 
 function escapeXml(s: string): string {
