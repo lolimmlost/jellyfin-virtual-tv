@@ -26,9 +26,9 @@ interface HlsSession {
 }
 
 const hlsSessions = new Map<string, HlsSession>();
-const HLS_IDLE_TIMEOUT_MS = 30_000; // Kill ffmpeg after 30s with no clients
-const HLS_SEGMENT_TIME = 6; // seconds per segment
-const HLS_LIST_SIZE = 10; // segments in the playlist window
+const HLS_IDLE_TIMEOUT_MS = 90_000; // Kill ffmpeg after 90s with no clients
+const HLS_SEGMENT_TIME = 4; // seconds per segment — shorter for faster initial load
+const HLS_LIST_SIZE = 15; // segments in the playlist window
 
 // Periodic cleanup of idle HLS sessions
 setInterval(() => {
@@ -171,6 +171,7 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           "-tag:v", "avc1",
           "-f", "hls",
           "-hls_time", String(HLS_SEGMENT_TIME),
+          "-hls_init_time", "1",
           "-hls_list_size", String(HLS_LIST_SIZE),
           "-hls_flags", "delete_segments+append_list+omit_endlist",
           "-hls_segment_filename", segmentPattern,
