@@ -34,7 +34,7 @@ const HLS_LIST_SIZE = 10; // segments in the playlist window
 setInterval(() => {
   const now = Date.now();
   for (const [channelId, session] of hlsSessions) {
-    if (session.clients === 0 && (now - session.lastAccess) > HLS_IDLE_TIMEOUT_MS) {
+    if ((now - session.lastAccess) > HLS_IDLE_TIMEOUT_MS) {
       stopHlsSession(channelId);
     }
   }
@@ -95,7 +95,7 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
   const BATCH_SIZE = 3;
 
   try {
-    while (!session.stopping && session.clients > 0) {
+    while (!session.stopping && (Date.now() - session.lastAccess) < HLS_IDLE_TIMEOUT_MS) {
       const current = await getCurrentSlot(channel);
       if (!current) {
         await sleep(5000);
@@ -336,7 +336,6 @@ iptvRouter.get("/hls/:channelId/stream.m3u8", async (req, res) => {
   }
 
   const session = getOrCreateHlsSession(channel);
-  session.clients++;
   session.lastAccess = Date.now();
 
   // Start the ffmpeg loop if not already running
@@ -349,8 +348,6 @@ iptvRouter.get("/hls/:channelId/stream.m3u8", async (req, res) => {
   while (!existsSync(m3u8Path) && (Date.now() - start) < maxWait) {
     await sleep(500);
   }
-
-  session.clients--;
 
   if (!existsSync(m3u8Path)) {
     res.status(503).json({ error: "HLS stream not ready" });
@@ -385,6 +382,7 @@ iptvRouter.get("/hls/:channelId/:segment", (req, res) => {
     return;
   }
 
+  // Each segment fetch keeps the session alive
   session.lastAccess = Date.now();
   const segPath = join(session.dir, segment);
 
