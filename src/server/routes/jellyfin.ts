@@ -95,6 +95,44 @@ jellyfinRouter.get("/genres", async (_req, res) => {
   }
 });
 
+jellyfinRouter.get("/tags", async (_req, res) => {
+  if (!JELLYFIN_URL || !JELLYFIN_API_KEY) {
+    res.status(500).json({ error: "JELLYFIN_URL and JELLYFIN_API_KEY must be set" });
+    return;
+  }
+
+  try {
+    // Jellyfin doesn't have a dedicated tags endpoint — query items and aggregate
+    const params = new URLSearchParams({
+      includeItemTypes: "Series,Movie",
+      recursive: "true",
+      fields: "Tags",
+      limit: "500",
+    });
+    const response = await fetch(`${JELLYFIN_URL}/Items?${params.toString()}`, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      res.status(response.status).json({ error: `Jellyfin returned ${response.status}` });
+      return;
+    }
+    const data = await response.json();
+    const tagSet = new Set<string>();
+    for (const item of data.Items || []) {
+      for (const tag of item.Tags || []) {
+        tagSet.add(tag);
+      }
+    }
+    const tags = [...tagSet].sort();
+    res.json({ tags });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Failed to fetch tags",
+    });
+  }
+});
+
 jellyfinRouter.get("/items", async (req, res) => {
   if (!JELLYFIN_URL || !JELLYFIN_API_KEY) {
     res.status(500).json({ error: "JELLYFIN_URL and JELLYFIN_API_KEY must be set" });
