@@ -154,6 +154,7 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
 
       await new Promise<void>((resolve) => {
         const ffmpegArgs = [
+          "-re",
           "-fflags", "+igndts+genpts+discardcorrupt",
           "-f", "concat",
           "-safe", "0",
