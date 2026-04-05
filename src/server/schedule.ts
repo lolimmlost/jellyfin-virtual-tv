@@ -36,15 +36,21 @@ export async function generateSchedule(channel: Channel): Promise<ScheduleSlot[]
   let currentTime = midnight.getTime();
   const endTime = currentTime + SCHEDULE_DURATION_MS;
 
+  // Load persistent cursor — picks up where we left off across schedule regenerations
+  const cursor = getCursor(channel.id);
+  let shuffleGen = cursor.shuffleGeneration;
+
   // Build a playlist based on shuffle mode
   let playlist: JellyfinItem[];
   if (channel.shuffleMode === "random") {
-    playlist = shuffleDeterministic(items, channel.id + dateKey(midnight));
+    // Use channel ID + generation counter as seed — each full cycle gets a fresh shuffle
+    playlist = shuffleDeterministic(items, channel.id + String(shuffleGen));
   } else {
     playlist = [...items];
   }
 
-  let idx = 0;
+  let idx = cursor.nextIndex % playlist.length;
+  const startIdx = idx;
 
   while (currentTime < endTime) {
     const item = playlist[idx % playlist.length];
@@ -53,7 +59,7 @@ export async function generateSchedule(channel: Channel): Promise<ScheduleSlot[]
     // Skip items with no meaningful duration (< 30s)
     if (durationMs < 30_000) {
       idx++;
-      if (idx > playlist.length * 2) break;
+      if (idx > startIdx + playlist.length * 2) break;
       continue;
     }
 
@@ -73,7 +79,19 @@ export async function generateSchedule(channel: Channel): Promise<ScheduleSlot[]
 
     currentTime += durationMs;
     idx++;
+
+    // When we've looped through the entire playlist, bump the shuffle generation
+    // so random mode gets a fresh order next cycle
+    if (idx > 0 && (idx - startIdx) % playlist.length === 0) {
+      shuffleGen++;
+      if (channel.shuffleMode === "random") {
+        playlist = shuffleDeterministic(items, channel.id + String(shuffleGen));
+      }
+    }
   }
+
+  // Persist where we left off — next schedule regen continues from here
+  saveCursor(channel.id, idx % playlist.length, shuffleGen);
 
   return slots;
 }
@@ -122,6 +140,22 @@ export async function getCurrentSlot(channel: Channel): Promise<{ slot: Schedule
   return null;
 }
 
+// Playlist cursor — persisted in SQLite so channels don't restart on regen
+function getCursor(channelId: string): { nextIndex: number; shuffleGeneration: number } {
+  const row = db.prepare("SELECT next_index, shuffle_generation FROM playlist_cursors WHERE channel_id = ?").get(channelId) as
+    | { next_index: number; shuffle_generation: number }
+    | undefined;
+  return row ? { nextIndex: row.next_index, shuffleGeneration: row.shuffle_generation } : { nextIndex: 0, shuffleGeneration: 0 };
+}
+
+function saveCursor(channelId: string, nextIndex: number, shuffleGeneration: number): void {
+  db.prepare(`
+    INSERT INTO playlist_cursors (channel_id, next_index, shuffle_generation)
+    VALUES (?, ?, ?)
+    ON CONFLICT(channel_id) DO UPDATE SET next_index = ?, shuffle_generation = ?
+  `).run(channelId, nextIndex, shuffleGeneration, nextIndex, shuffleGeneration);
+}
+
 // Deterministic shuffle based on a seed string
 function shuffleDeterministic(items: JellyfinItem[], seed: string): JellyfinItem[] {
   const arr = [...items];
@@ -136,10 +170,6 @@ function shuffleDeterministic(items: JellyfinItem[], seed: string): JellyfinItem
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
-}
-
-function dateKey(d: Date): string {
-  return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
 }
 
 function buildImageUrl(item: JellyfinItem): string | undefined {
