@@ -143,6 +143,7 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
   const wantEpisodes = !filter.itemTypes?.length || filter.itemTypes.includes("Episode");
   const wantMovies = !filter.itemTypes?.length || filter.itemTypes.includes("Movie");
 
+  const seen = new Set<string>();
   const allItems: JellyfinItem[] = [];
 
   for (const search of searchTerms) {
@@ -156,7 +157,12 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       const seriesList = await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw);
       for (const series of seriesList) {
         const episodes = await getEpisodes(series.Id, limit);
-        allItems.push(...episodes);
+        for (const ep of episodes) {
+          if (!seen.has(ep.Id)) {
+            seen.add(ep.Id);
+            allItems.push(ep);
+          }
+        }
       }
     }
 
@@ -169,7 +175,12 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       movieParams.set("limit", String(limit));
 
       const movies = await queryAcrossLibraries(movieParams, filter.libraryIds, queryItems);
-      allItems.push(...movies);
+      for (const movie of movies) {
+        if (!seen.has(movie.Id)) {
+          seen.add(movie.Id);
+          allItems.push(movie);
+        }
+      }
     }
   }
 
