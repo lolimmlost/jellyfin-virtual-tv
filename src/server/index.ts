@@ -33,10 +33,15 @@ app.get("/health/detailed", async (_req, res) => {
   let withSchedule = 0;
 
   for (const ch of channels) {
-    const slots = await getSchedule(ch);
-    if (slots.length > 0) {
-      withSchedule++;
-    } else {
+    try {
+      const slots = await getSchedule(ch);
+      if (slots.length > 0) {
+        withSchedule++;
+      } else {
+        emptyChannels.push(ch.name);
+      }
+    } catch (err) {
+      console.warn(`[health] schedule check failed for ${ch.name}:`, err instanceof Error ? err.message : err);
       emptyChannels.push(ch.name);
     }
   }
