@@ -50,6 +50,93 @@ const buttonStyle: React.CSSProperties = {
   transition: "transform 0.1s, box-shadow 0.1s",
 };
 
+// ── Keyword Parser ──────────────────────────────────────────────
+
+const ITEM_TYPE_WORDS: Record<string, "Movie" | "Episode"> = {
+  movies: "Movie", movie: "Movie", films: "Movie", film: "Movie",
+  shows: "Episode", show: "Episode", tv: "Episode", episodes: "Episode", episode: "Episode", series: "Episode",
+};
+
+function parseKeywords(
+  input: string,
+  knownGenres: string[],
+  knownTags: string[],
+): { name: string; filters: ChannelFilter } {
+  const filters: ChannelFilter = {};
+  const excludeGenres: string[] = [];
+  const excludeTags: string[] = [];
+  const genres: string[] = [];
+  const tags: string[] = [];
+  const itemTypes: ("Movie" | "Episode")[] = [];
+  const titleParts: string[] = [];
+  const nameWords: string[] = [];
+
+  // Lowercase lookup maps
+  const genreMap = new Map(knownGenres.map((g) => [g.toLowerCase(), g]));
+  const tagMap = new Map(knownTags.map((t) => [t.toLowerCase(), t]));
+  // Multi-word genres sorted longest first for greedy matching
+  const multiWordGenres = knownGenres.filter((g) => g.includes(" ")).sort((a, b) => b.length - a.length);
+  const multiWordTags = knownTags.filter((t) => t.includes(" ")).sort((a, b) => b.length - a.length);
+
+  let remaining = input.trim();
+
+  // Pass 1: extract "no X" / "not X" / "exclude X" patterns
+  remaining = remaining.replace(/\b(?:no|not|exclude|without)\s+(\S+(?:\s+\S+)?)/gi, (_, term) => {
+    const lower = term.toLowerCase();
+    if (genreMap.has(lower)) { excludeGenres.push(genreMap.get(lower)!); }
+    else if (tagMap.has(lower)) { excludeTags.push(tagMap.get(lower)!); }
+    else { excludeTags.push(term); }
+    return "";
+  });
+
+  // Pass 2: multi-word genre/tag match (greedy, longest first)
+  for (const g of multiWordGenres) {
+    const re = new RegExp(`\\b${g.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (re.test(remaining)) {
+      genres.push(g);
+      nameWords.push(g);
+      remaining = remaining.replace(re, "");
+    }
+  }
+  for (const t of multiWordTags) {
+    const re = new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (re.test(remaining)) {
+      tags.push(t);
+      nameWords.push(t);
+      remaining = remaining.replace(re, "");
+    }
+  }
+
+  // Pass 3: single-word matching
+  const words = remaining.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    const lower = w.toLowerCase();
+    if (lower === "only") continue;
+    if (ITEM_TYPE_WORDS[lower] && !itemTypes.includes(ITEM_TYPE_WORDS[lower])) {
+      itemTypes.push(ITEM_TYPE_WORDS[lower]);
+    } else if (genreMap.has(lower)) {
+      genres.push(genreMap.get(lower)!);
+      nameWords.push(genreMap.get(lower)!);
+    } else if (tagMap.has(lower)) {
+      tags.push(tagMap.get(lower)!);
+      nameWords.push(tagMap.get(lower)!);
+    } else {
+      titleParts.push(w);
+      nameWords.push(w.charAt(0).toUpperCase() + w.slice(1));
+    }
+  }
+
+  if (genres.length) filters.genres = genres;
+  if (tags.length) filters.tags = tags;
+  if (excludeGenres.length) filters.excludeGenres = excludeGenres;
+  if (excludeTags.length) filters.excludeTags = excludeTags;
+  if (itemTypes.length) filters.itemTypes = itemTypes;
+  if (titleParts.length) filters.titleMatch = titleParts.join(", ");
+
+  const name = nameWords.length > 0 ? nameWords.join(" ") : "New Channel";
+  return { name, filters };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────
 
 function formatTime(iso: string): string {
@@ -239,9 +326,15 @@ export default function App() {
           background: c.bg,
         }}>
           <div style={{ padding: 16 }}>
-            <button onClick={createChannel} style={{ ...buttonStyle, width: "100%", padding: "12px 16px" }}>
-              + New Channel
-            </button>
+            <QuickCreate
+              onCreated={(ch) => {
+                setChannels((prev) => [...prev, ch]);
+                setSelectedId(ch.id);
+                setEditing(true);
+                if (isMobile) setShowSidebar(false);
+              }}
+              existingCount={channels.length}
+            />
           </div>
           <div style={{ flex: 1, overflowY: "auto" }}>
             {channels.map((ch) => {
@@ -330,6 +423,132 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+// ── Quick Create ──────────────────────────────────────────────
+
+function QuickCreate({ onCreated, existingCount }: {
+  onCreated: (ch: Channel) => void;
+  existingCount: number;
+}) {
+  const [input, setInput] = useState("");
+  const [genres, setGenres] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [preview, setPreview] = useState<{ count: number; parsed: ReturnType<typeof parseKeywords> } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Fetch genres + tags once
+  useEffect(() => {
+    fetch("/api/jellyfin/genres").then((r) => r.json()).then((d) => setGenres(d.genres || [])).catch(() => {});
+    fetch("/api/jellyfin/tags").then((r) => r.json()).then((d) => setTags(d.tags || [])).catch(() => {});
+  }, []);
+
+  // Debounced preview
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!input.trim() || genres.length === 0) { setPreview(null); return; }
+    debounceRef.current = setTimeout(async () => {
+      const parsed = parseKeywords(input, genres, tags);
+      if (Object.keys(parsed.filters).length === 0) { setPreview(null); return; }
+      try {
+        const res = await fetch("/api/channels/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: parsed.filters }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPreview({ count: data.count, parsed });
+        }
+      } catch {}
+    }, 400);
+  }, [input, genres, tags]);
+
+  async function handleCreate() {
+    if (!preview) return;
+    setLoading(true);
+    const { name, filters } = preview.parsed;
+    const res = await fetch("/api/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        number: existingCount + 1,
+        filters,
+        shuffleMode: "random",
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      onCreated(data.channel);
+      setInput("");
+      setPreview(null);
+    }
+    setLoading(false);
+  }
+
+  function handleBlankCreate() {
+    fetch("/api/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: `Channel ${existingCount + 1}`,
+        number: existingCount + 1,
+        filters: {},
+        shuffleMode: "random",
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => onCreated(data.channel))
+      .catch(() => {});
+  }
+
+  const filtersText = preview ? formatParsedFilters(preview.parsed.filters) : "";
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && preview) handleCreate(); }}
+          placeholder="horror no anime movies..."
+          style={{ ...inputStyle, flex: 1, fontSize: 12, padding: "8px 10px" }}
+        />
+        {input.trim() && preview ? (
+          <button
+            onClick={handleCreate}
+            disabled={loading || preview.count === 0}
+            style={{ ...buttonStyle, padding: "8px 12px", fontSize: 11, whiteSpace: "nowrap", opacity: preview.count === 0 ? 0.5 : 1 }}
+          >
+            Create
+          </button>
+        ) : (
+          <button onClick={handleBlankCreate} style={{ ...buttonStyle, padding: "8px 12px", fontSize: 11, whiteSpace: "nowrap" }}>
+            +
+          </button>
+        )}
+      </div>
+      {preview && (
+        <div style={{ marginTop: 6, fontSize: 11, color: c.textDim, fontWeight: 700, lineHeight: 1.4 }}>
+          <span style={{ color: preview.count > 0 ? c.success : c.danger }}>{preview.count} items</span>
+          {filtersText && <span> · {filtersText}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatParsedFilters(f: ChannelFilter): string {
+  const parts: string[] = [];
+  if (f.genres?.length) parts.push(f.genres.join(", "));
+  if (f.tags?.length) parts.push(`tags: ${f.tags.join(", ")}`);
+  if (f.excludeGenres?.length) parts.push(`no ${f.excludeGenres.join(", ")}`);
+  if (f.excludeTags?.length) parts.push(`no ${f.excludeTags.join(", ")}`);
+  if (f.itemTypes?.length) parts.push(f.itemTypes.map((t) => t === "Movie" ? "Movies" : "Shows").join(", "));
+  if (f.titleMatch) parts.push(`"${f.titleMatch}"`);
+  return parts.join(" · ");
 }
 
 // ── Now Playing ────────────────────────────────────────────────
