@@ -26,9 +26,9 @@ interface HlsSession {
 }
 
 const hlsSessions = new Map<string, HlsSession>();
-const HLS_IDLE_TIMEOUT_MS = 90_000; // Kill ffmpeg after 90s with no clients
-const HLS_SEGMENT_TIME = 10; // seconds per segment — longer = fewer requests, less stutter
-const HLS_LIST_SIZE = 10; // segments in the playlist window
+const HLS_IDLE_TIMEOUT_MS = 120_000; // Kill ffmpeg after 2min with no clients
+const HLS_SEGMENT_TIME = 6; // seconds per segment
+const HLS_LIST_SIZE = 0; // 0 = keep all segments in playlist (event mode)
 
 // Periodic cleanup of idle HLS sessions
 setInterval(() => {
@@ -154,7 +154,6 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
 
       await new Promise<void>((resolve) => {
         const ffmpegArgs = [
-          "-re",
           "-fflags", "+igndts+genpts+discardcorrupt",
           "-f", "concat",
           "-safe", "0",
@@ -171,9 +170,8 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           "-tag:v", "avc1",
           "-f", "hls",
           "-hls_time", String(HLS_SEGMENT_TIME),
-          "-hls_init_time", "1",
           "-hls_list_size", String(HLS_LIST_SIZE),
-          "-hls_flags", "delete_segments+append_list+omit_endlist",
+          "-hls_flags", "append_list+omit_endlist+program_date_time",
           "-hls_segment_filename", segmentPattern,
           m3u8Path,
         ];
@@ -358,11 +356,37 @@ iptvRouter.get("/hls/:channelId/stream.m3u8", async (req, res) => {
     return;
   }
 
-  let content = readFileSync(m3u8Path, "utf8");
-
-  // Rewrite segment paths to absolute URLs so clients can fetch them
+  const rawContent = readFileSync(m3u8Path, "utf8");
   const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
-  content = content.replace(/(seg_\d+\.ts)/g, `${baseUrl}/iptv/hls/${channel.id}/$1`);
+
+  // ffmpeg runs at full speed so all segments exist immediately.
+  // Serve only the last ~60s of segments (the "live edge") so the client
+  // starts near the current playback position instead of the batch start.
+  const LIVE_WINDOW_SEGMENTS = 10;
+  const lines = rawContent.split("\n");
+  const segLines: { idx: number; extinf: string; file: string }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith("#EXTINF:") && i + 1 < lines.length && lines[i + 1].match(/^seg_\d+\.ts$/)) {
+      segLines.push({ idx: i, extinf: lines[i], file: lines[i + 1] });
+    }
+  }
+
+  // Calculate which segment corresponds to "now" based on elapsed time since batch start
+  // Use the last LIVE_WINDOW_SEGMENTS segments from whatever ffmpeg has produced so far
+  const tailSegs = segLines.slice(-LIVE_WINDOW_SEGMENTS);
+  const firstSeqNum = tailSegs.length > 0
+    ? parseInt(tailSegs[0].file.match(/seg_(\d+)/)?.[1] || "0", 10)
+    : 0;
+
+  // Build a live-style sliding window playlist
+  let content = "#EXTM3U\n";
+  content += "#EXT-X-VERSION:3\n";
+  content += `#EXT-X-TARGETDURATION:${HLS_SEGMENT_TIME + 2}\n`;
+  content += `#EXT-X-MEDIA-SEQUENCE:${firstSeqNum}\n`;
+  for (const seg of tailSegs) {
+    content += `${seg.extinf}\n`;
+    content += `${baseUrl}/iptv/hls/${channel.id}/${seg.file}\n`;
+  }
 
   res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
   res.setHeader("Cache-Control", "no-cache, no-store");
