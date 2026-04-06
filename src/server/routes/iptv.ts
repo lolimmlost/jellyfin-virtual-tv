@@ -214,11 +214,16 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
       });
 
       // ffmpeg finished the batch at full speed — wait until the batch's
-      // wall-clock end time before starting the next one
+      // wall-clock end time before starting the next one.
+      // Keep lastAccess fresh so the idle cleanup doesn't kill us while sleeping.
       const waitMs = batchEndMs - Date.now();
       if (waitMs > 0 && !session.stopping) {
         console.log(`[hls] ${channel.name}: batch content ready, waiting ${Math.round(waitMs / 1000)}s until next batch`);
-        await sleep(waitMs);
+        const waitEnd = Date.now() + waitMs;
+        while (Date.now() < waitEnd && !session.stopping) {
+          session.lastAccess = Date.now();
+          await sleep(Math.min(30_000, waitEnd - Date.now()));
+        }
       }
     }
   } catch (err) {
