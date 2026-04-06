@@ -80,8 +80,9 @@ async function queryAcrossLibraries<T>(
   if (libraryIds?.length) {
     const results: T[] = [];
     for (const libId of libraryIds) {
-      params.set("parentId", libId);
-      results.push(...await queryFn(params));
+      const libParams = new URLSearchParams(params);
+      libParams.set("parentId", libId);
+      results.push(...await queryFn(libParams));
     }
     return results;
   }

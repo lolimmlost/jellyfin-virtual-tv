@@ -54,7 +54,7 @@ iptvRouter.get("/channels.m3u", async (req, res) => {
       if (img) logoUrl = img;
     }
     const logoParam = logoUrl ? ` tvg-logo="${escapeAttr(logoUrl)}"` : "";
-    m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${escapeAttr(ch.name)}"${logoParam} group-title="Virtual TV",${ch.name}\n`;
+    m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-chno="${ch.number}" tvg-name="${escapeAttr(ch.name)}"${logoParam} group-title="Virtual TV",${escapeAttr(ch.name)}\n`;
     // ?f= is a format version that busts Jellyfin's probe cache when our stream format changes
     // Bump this number whenever the stream encoding pipeline changes (e.g., passthrough → GPU transcode)
     m3u += `${baseUrl}/iptv/stream/${ch.id}.ts?f=3\n\n`;
@@ -191,18 +191,23 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
 
       for (let i = 0; i < batchSlots.length; i++) {
         const bSlot = batchSlots[i];
-        const params = new URLSearchParams({
-          api_key: apiKey,
-          VideoCodec: "h264",
-          AudioCodec: "aac",
-          AudioChannels: "2",
-          MaxStreamingBitrate: "20000000",
-          VideoBitRate: "8000000",
-          AudioBitRate: "192000",
-          MaxWidth: "1920",
-          MaxHeight: "1080",
-          AudioStreamIndex: "0",
-        });
+        const params = new URLSearchParams({ api_key: apiKey });
+
+        if (channel.streamMode === "copy") {
+          // Passthrough: serve original file, let ffmpeg remux to mpegts
+          params.set("Static", "true");
+        } else {
+          // Transcode: normalize to H.264+AAC for smooth transitions
+          params.set("VideoCodec", "h264");
+          params.set("AudioCodec", "aac");
+          params.set("AudioChannels", "2");
+          params.set("MaxStreamingBitrate", "20000000");
+          params.set("VideoBitRate", "8000000");
+          params.set("AudioBitRate", "192000");
+          params.set("MaxWidth", "1920");
+          params.set("MaxHeight", "1080");
+        }
+
         // Only seek into the first slot (it's already in progress)
         if (i === 0 && offsetSeconds > 0) {
           params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
