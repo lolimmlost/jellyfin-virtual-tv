@@ -212,6 +212,28 @@ export default function App() {
           0%, 100% { text-shadow: 0 0 4px #FF6B6B, 0 0 10px #FF6B6B, 0 0 20px #FF6B6B, 0 0 40px #FF6B6B; }
           50% { text-shadow: 0 0 2px #FF6B6B, 0 0 5px #FF6B6B, 0 0 10px #FF6B6B; }
         }
+        @keyframes vtFadeIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes vtPulseDot {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.35; }
+        }
+        .vt-fadein { animation: vtFadeIn 0.22s ease-out both; }
+        body { scrollbar-color: #3a3a3a #141414; scrollbar-width: thin; }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #141414; }
+        ::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #141414; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        button { transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s, color 0.15s; }
+        button:not(:disabled) { cursor: pointer; }
+        button:not(:disabled):active { transform: translate(2px, 2px); }
+        button:disabled { cursor: not-allowed; }
+        input, select, textarea { transition: border-color 0.12s ease, background 0.15s; }
+        input:focus, select:focus, textarea:focus { border-color: #FFD93D !important; }
+        .vt-row { transition: background 0.12s ease, border-color 0.12s ease; }
+        .vt-row:hover { background: #1a1a1a !important; }
       `;
       document.head.appendChild(style);
     }
@@ -224,6 +246,16 @@ export default function App() {
       .then(setStatus)
       .catch(() => setStatus({ connected: false }));
   }, []);
+
+  // Escape cancels the editor
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEditing(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing]);
 
   function loadChannels() {
     fetch("/api/channels")
@@ -342,6 +374,7 @@ export default function App() {
               return (
                 <div
                   key={ch.id}
+                  className={active ? undefined : "vt-row"}
                   onClick={() => { setSelectedId(ch.id); setEditing(false); if (isMobile) setShowSidebar(false); }}
                   style={{
                     padding: "12px 16px", cursor: "pointer",
@@ -561,46 +594,81 @@ function NowPlaying({ channelId }: { channelId: string }) {
     startTime?: string;
     endTime?: string;
   } | null>(null);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
-    fetch(`/iptv/now/${channelId}`)
-      .then((r) => r.json())
-      .then(setNowData)
-      .catch(() => setNowData(null));
+    let cancelled = false;
+    let endTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const load = async () => {
+      try {
+        const r = await fetch(`/iptv/now/${channelId}`);
+        const d = await r.json();
+        if (cancelled) return;
+        setNowData(d);
+        // Refetch right after the current slot ends so we roll over to the next program
+        if (endTimer) clearTimeout(endTimer);
+        if (d?.endTime) {
+          const remaining = new Date(d.endTime).getTime() - Date.now();
+          if (remaining > 0 && remaining < 60 * 60 * 1000) {
+            endTimer = setTimeout(load, remaining + 800);
+          }
+        }
+      } catch {
+        if (!cancelled) setNowData(null);
+      }
+    };
+
+    load();
+    const pollId = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(pollId); if (endTimer) clearTimeout(endTimer); };
   }, [channelId]);
+
+  // Tick once per second so the progress bar and "m elapsed / m remaining" stay live
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => (t + 1) % 1_000_000), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   if (!nowData || !nowData.nowPlaying) {
     return (
-      <div style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.border}40`, fontSize: 13, color: c.textDim, fontWeight: 700 }}>
+      <div className="vt-fadein" style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.border}40`, fontSize: 13, color: c.textDim, fontWeight: 700 }}>
         Nothing currently playing
       </div>
     );
   }
 
-  const elapsed = nowData.offsetSeconds || 0;
-  const total = nowData.startTime && nowData.endTime
-    ? (new Date(nowData.endTime).getTime() - new Date(nowData.startTime).getTime()) / 1000
-    : 0;
+  const startMs = nowData.startTime ? new Date(nowData.startTime).getTime() : 0;
+  const endMs = nowData.endTime ? new Date(nowData.endTime).getTime() : 0;
+  const total = Math.max(0, (endMs - startMs) / 1000);
+  const elapsed = startMs ? Math.max(0, Math.min(total, (Date.now() - startMs) / 1000)) : 0;
   const progress = total > 0 ? Math.min((elapsed / total) * 100, 100) : 0;
 
   return (
-    <div style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.accent}60` }}>
+    <div className="vt-fadein" style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.accent}60` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
           background: c.danger, color: c.black, fontSize: 10, fontWeight: 800,
           padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.1em",
-        }}>LIVE</span>
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: "50%", background: c.black,
+            animation: "vtPulseDot 1.2s ease-in-out infinite",
+          }} />
+          LIVE
+        </span>
         <span style={{ fontSize: 16, fontWeight: 800 }}>{nowData.nowPlaying}</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: c.textDim, fontWeight: 700 }}>
         <span>{formatTime(nowData.startTime!)}</span>
         <div style={{ flex: 1, height: 4, background: c.bg, position: "relative" }}>
-          <div style={{ width: `${progress}%`, height: "100%", background: c.accent, transition: "width 1s" }} />
+          <div style={{ width: `${progress}%`, height: "100%", background: c.accent, transition: "width 1s linear" }} />
         </div>
         <span>{formatTime(nowData.endTime!)}</span>
       </div>
       <div style={{ fontSize: 11, color: c.textDim, marginTop: 6, fontWeight: 700 }}>
-        {Math.floor(elapsed / 60)}m elapsed / {Math.floor((total - elapsed) / 60)}m remaining
+        {Math.floor(elapsed / 60)}m elapsed / {Math.max(0, Math.floor((total - elapsed) / 60))}m remaining
       </div>
     </div>
   );
@@ -608,53 +676,90 @@ function NowPlaying({ channelId }: { channelId: string }) {
 
 // ── Schedule Guide ─────────────────────────────────────────────
 
+function ScheduleSkeleton({ compact }: { compact?: boolean }) {
+  const rowH = compact ? 28 : 36;
+  const rows = compact ? 5 : 7;
+  return (
+    <div className="vt-fadein" style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 6 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} style={{
+          display: "flex", gap: compact ? 8 : 12, alignItems: "center",
+          paddingLeft: 8, opacity: 0.5 - i * 0.05,
+        }}>
+          <div style={{ width: compact ? 48 : 64, height: rowH, background: c.surfaceAlt, border: `2px solid ${c.border}20` }} />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ height: 10, width: `${60 + (i * 7) % 35}%`, background: c.surfaceAlt }} />
+            <div style={{ height: 8, width: "40%", background: c.surfaceAlt, opacity: 0.7 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ScheduleGuide({ channelId, maxSlots, compact }: { channelId: string; maxSlots?: number; compact?: boolean }) {
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
   const nowRef = useRef<HTMLDivElement>(null);
+  const scrolledRef = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
+    scrolledRef.current = false;
     setLoading(true);
-    fetch(`/iptv/schedule/${channelId}`)
-      .then((r) => r.json())
-      .then((data) => {
+
+    const load = async () => {
+      try {
+        const r = await fetch(`/iptv/schedule/${channelId}`);
+        const data = await r.json();
+        if (cancelled) return;
         setSlots(data.slots || []);
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    const pollId = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(pollId); };
   }, [channelId]);
 
-  // Auto-scroll to "now playing" within the schedule's scroll container (not the page)
+  // Refresh the "now" marker every 15s so the NOW highlight tracks wall-clock time
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Auto-scroll to "now playing" within the schedule's scroll container (not the page).
+  // Only scroll once per channel load — subsequent poll refreshes must not re-scroll.
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!loading && nowRef.current) {
-      // Find the nearest scrollable ancestor
-      const item = nowRef.current;
-      const container = scrollContainerRef.current;
-      if (container) {
-        // For non-compact: container itself scrolls
-        // For compact: walk up to the scrollable parent (sticky sidebar)
-        const scroller = container.scrollHeight > container.clientHeight
-          ? container
-          : container.closest<HTMLElement>("[data-scroll-container]") || container.parentElement;
-        if (scroller) {
-          const itemRect = item.getBoundingClientRect();
-          const scrollerRect = scroller.getBoundingClientRect();
-          scroller.scrollTop += itemRect.top - scrollerRect.top;
-        }
+    if (loading || scrolledRef.current || !nowRef.current) return;
+    const item = nowRef.current;
+    const container = scrollContainerRef.current;
+    if (container) {
+      const scroller = container.scrollHeight > container.clientHeight
+        ? container
+        : container.closest<HTMLElement>("[data-scroll-container]") || container.parentElement;
+      if (scroller) {
+        const itemRect = item.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        scroller.scrollTop += itemRect.top - scrollerRect.top;
+        scrolledRef.current = true;
       }
     }
   }, [loading, slots]);
 
   if (loading) {
-    return <div style={{ color: c.textDim, fontSize: 13, fontWeight: 700, padding: 16 }}>Loading schedule...</div>;
+    return <ScheduleSkeleton compact={compact} />;
   }
 
   if (slots.length === 0) {
     return <div style={{ color: c.textDim, fontSize: 13, fontWeight: 700, padding: 16 }}>No content scheduled</div>;
   }
 
-  const now = Date.now();
   const displaySlots = maxSlots ? slots.slice(0, maxSlots) : slots;
   const imgSize = compact ? { w: 48, h: 28 } : { w: 64, h: 36 };
 
@@ -671,7 +776,7 @@ function ScheduleGuide({ channelId, maxSlots, compact }: { channelId: string; ma
   }
 
   return (
-    <div ref={scrollContainerRef} style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: compact ? undefined : 600, overflowY: compact ? undefined : "auto", position: "relative" }}>
+    <div ref={scrollContainerRef} className="vt-fadein" style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: compact ? undefined : 600, overflowY: compact ? undefined : "auto", position: "relative" }}>
       {groups.map((group) => (
         <div key={group.date}>
           <div style={{
@@ -743,7 +848,7 @@ function ChannelDetail({ channel, onEdit, onDelete }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
-    <div>
+    <div key={channel.id} className="vt-fadein">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>{channel.name}</h2>
@@ -818,7 +923,7 @@ function ChannelEditor({ channel, onSave, onCancel }: {
   }
 
   return (
-    <div style={{ display: "flex", gap: 24 }}>
+    <div className="vt-fadein" style={{ display: "flex", gap: 24 }}>
       {/* Editor form */}
       <form onSubmit={handleSubmit} style={{ flex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
