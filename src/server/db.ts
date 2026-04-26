@@ -31,16 +31,6 @@ db.exec(`
   )
 `);
 
-// Playlist cursor — tracks where each channel left off so sequential channels
-// don't restart at ep 1 and random channels get fresh shuffles each cycle
-db.exec(`
-  CREATE TABLE IF NOT EXISTS playlist_cursors (
-    channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
-    next_index INTEGER NOT NULL DEFAULT 0,
-    shuffle_generation INTEGER NOT NULL DEFAULT 0
-  )
-`);
-
 // Migrations
 const migrations = [
   `ALTER TABLE channels ADD COLUMN stream_mode TEXT NOT NULL DEFAULT 'transcode'`,

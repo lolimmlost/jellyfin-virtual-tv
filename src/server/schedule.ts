@@ -5,9 +5,18 @@ import db, { rowToChannel, type ChannelRow } from "./db.js";
 // In-memory schedule cache: channelId -> { slots, generatedAt }
 const scheduleCache = new Map<string, { slots: ScheduleSlot[]; generatedAt: number }>();
 
-const SCHEDULE_DURATION_MS = 48 * 60 * 60 * 1000; // 48 hours — covers all timezones
+const SCHEDULE_DURATION_MS = 48 * 60 * 60 * 1000; // 48 hours
 const CACHE_TTL_MS = 60 * 60 * 1000; // Regenerate every hour
 const TICKS_PER_MS = 10_000;
+
+// IANA zone — controls where day boundaries fall (e.g. for future prime-time
+// blocks or daily reshuffles). Override via SCHEDULE_TZ env var.
+const SCHEDULE_TZ = process.env.SCHEDULE_TZ || "America/Los_Angeles";
+
+// Fixed instant: 2026-01-01 00:00 in SCHEDULE_TZ. The slot index for any
+// wall-clock time is `f(now - SCHEDULE_ANCHOR_MS)` — must never change across
+// regens, restarts, or deploys, or imported EPGs will silently desync.
+const SCHEDULE_ANCHOR_MS = zonedTimestamp(2026, 1, 1, 0, 0, 0, SCHEDULE_TZ);
 
 export async function getSchedule(channel: Channel): Promise<ScheduleSlot[]> {
   const cached = scheduleCache.get(channel.id);
@@ -23,77 +32,90 @@ export async function getSchedule(channel: Channel): Promise<ScheduleSlot[]> {
 }
 
 export async function generateSchedule(channel: Channel): Promise<ScheduleSlot[]> {
-  const items = await fetchItemsForFilter(channel.filters);
+  const items = (await fetchItemsForFilter(channel.filters))
+    .filter((it) => it.RunTimeTicks / TICKS_PER_MS >= 30_000);
 
   if (items.length === 0) return [];
 
+  // Horizon starts at local-midnight today so day boundaries align with SCHEDULE_TZ.
+  const startMs = zonedStartOfDay(Date.now(), SCHEDULE_TZ);
+  const endMs = startMs + SCHEDULE_DURATION_MS;
+
+  // Pure-function locator: which playlist slot contains startMs?
+  let { slotStart, cycleNum, indexInCycle } = locateSlot(channel, items, startMs);
+  let playlist = buildPlaylist(channel, items, cycleNum);
+  let idx = indexInCycle;
+  let t = slotStart;
+
   const slots: ScheduleSlot[] = [];
-
-  // Schedule starts at the most recent midnight UTC
-  const now = new Date();
-  const midnight = new Date(now);
-  midnight.setUTCHours(0, 0, 0, 0);
-  let currentTime = midnight.getTime();
-  const endTime = currentTime + SCHEDULE_DURATION_MS;
-
-  // Load persistent cursor — picks up where we left off across schedule regenerations
-  const cursor = getCursor(channel.id);
-  let shuffleGen = cursor.shuffleGeneration;
-
-  // Build a playlist based on shuffle mode
-  let playlist: JellyfinItem[];
-  if (channel.shuffleMode === "random") {
-    // Use channel ID + generation counter as seed — each full cycle gets a fresh shuffle
-    playlist = shuffleDeterministic(items, channel.id + String(shuffleGen));
-  } else {
-    playlist = [...items];
-  }
-
-  let idx = cursor.nextIndex % playlist.length;
-  const startIdx = idx;
-
-  while (currentTime < endTime) {
-    const item = playlist[idx % playlist.length];
-    const durationMs = item.RunTimeTicks / TICKS_PER_MS;
-
-    // Skip items with no meaningful duration (< 30s)
-    if (durationMs < 30_000) {
-      idx++;
-      if (idx > startIdx + playlist.length * 2) break;
-      continue;
-    }
-
-    const slotStart = new Date(currentTime);
-    const slotEnd = new Date(currentTime + durationMs);
+  while (t < endMs) {
+    const item = playlist[idx];
+    const durMs = item.RunTimeTicks / TICKS_PER_MS;
 
     slots.push({
       channelId: channel.id,
       itemId: item.Id,
       title: formatTitle(item),
-      startTime: slotStart.toISOString(),
-      endTime: slotEnd.toISOString(),
+      startTime: new Date(t).toISOString(),
+      endTime: new Date(t + durMs).toISOString(),
       durationTicks: item.RunTimeTicks,
       filePath: item.Path || "",
       imageUrl: buildImageUrl(item),
     });
 
-    currentTime += durationMs;
+    t += durMs;
     idx++;
-
-    // When we've looped through the entire playlist, bump the shuffle generation
-    // so random mode gets a fresh order next cycle
-    if (idx > 0 && (idx - startIdx) % playlist.length === 0) {
-      shuffleGen++;
-      if (channel.shuffleMode === "random") {
-        playlist = shuffleDeterministic(items, channel.id + String(shuffleGen));
-      }
+    if (idx >= playlist.length) {
+      idx = 0;
+      cycleNum++;
+      playlist = buildPlaylist(channel, items, cycleNum);
     }
   }
 
-  // Persist where we left off — next schedule regen continues from here
-  saveCursor(channel.id, idx % playlist.length, shuffleGen);
-
   return slots;
+}
+
+// Deterministic: returns the slot containing time `t`. Same inputs → same output,
+// no persistent state. This is what makes the EPG and now-playing pointer agree.
+function locateSlot(
+  channel: Channel,
+  items: JellyfinItem[],
+  t: number,
+): { slotStart: number; cycleNum: number; indexInCycle: number } {
+  const cycleDurMs = items.reduce((s, it) => s + it.RunTimeTicks / TICKS_PER_MS, 0);
+  if (cycleDurMs <= 0) {
+    return { slotStart: SCHEDULE_ANCHOR_MS, cycleNum: 0, indexInCycle: 0 };
+  }
+
+  const elapsed = t - SCHEDULE_ANCHOR_MS;
+  if (elapsed < 0) {
+    return { slotStart: SCHEDULE_ANCHOR_MS, cycleNum: 0, indexInCycle: 0 };
+  }
+
+  const cycleNum = Math.floor(elapsed / cycleDurMs);
+  const posInCycle = elapsed - cycleNum * cycleDurMs;
+  const playlist = buildPlaylist(channel, items, cycleNum);
+
+  let cum = 0;
+  for (let i = 0; i < playlist.length; i++) {
+    const dur = playlist[i].RunTimeTicks / TICKS_PER_MS;
+    if (cum + dur > posInCycle) {
+      return {
+        slotStart: SCHEDULE_ANCHOR_MS + cycleNum * cycleDurMs + cum,
+        cycleNum,
+        indexInCycle: i,
+      };
+    }
+    cum += dur;
+  }
+  return { slotStart: SCHEDULE_ANCHOR_MS + cycleNum * cycleDurMs, cycleNum, indexInCycle: 0 };
+}
+
+function buildPlaylist(channel: Channel, items: JellyfinItem[], cycleNum: number): JellyfinItem[] {
+  if (channel.shuffleMode === "random") {
+    return shuffleDeterministic(items, channel.id + ":" + cycleNum);
+  }
+  return [...items];
 }
 
 export function invalidateSchedule(channelId: string) {
@@ -119,13 +141,11 @@ export function getAllChannels(): Channel[] {
   return rows.map(rowToChannel);
 }
 
-// Get the first slot in the schedule (for channel logo fallback)
 export async function getFirstSlot(channel: Channel): Promise<ScheduleSlot | null> {
   const schedule = await getSchedule(channel);
   return schedule[0] || null;
 }
 
-// Get the schedule slot that should be playing right now
 export async function getCurrentSlot(channel: Channel): Promise<{ slot: ScheduleSlot; offsetSeconds: number } | null> {
   const schedule = await getSchedule(channel);
   const now = new Date().toISOString();
@@ -140,23 +160,6 @@ export async function getCurrentSlot(channel: Channel): Promise<{ slot: Schedule
   return null;
 }
 
-// Playlist cursor — persisted in SQLite so channels don't restart on regen
-function getCursor(channelId: string): { nextIndex: number; shuffleGeneration: number } {
-  const row = db.prepare("SELECT next_index, shuffle_generation FROM playlist_cursors WHERE channel_id = ?").get(channelId) as
-    | { next_index: number; shuffle_generation: number }
-    | undefined;
-  return row ? { nextIndex: row.next_index, shuffleGeneration: row.shuffle_generation } : { nextIndex: 0, shuffleGeneration: 0 };
-}
-
-function saveCursor(channelId: string, nextIndex: number, shuffleGeneration: number): void {
-  db.prepare(`
-    INSERT INTO playlist_cursors (channel_id, next_index, shuffle_generation)
-    VALUES (?, ?, ?)
-    ON CONFLICT(channel_id) DO UPDATE SET next_index = ?, shuffle_generation = ?
-  `).run(channelId, nextIndex, shuffleGeneration, nextIndex, shuffleGeneration);
-}
-
-// Deterministic shuffle based on a seed string
 function shuffleDeterministic(items: JellyfinItem[], seed: string): JellyfinItem[] {
   const arr = [...items];
   let hash = 0;
@@ -176,11 +179,9 @@ function buildImageUrl(item: JellyfinItem): string | undefined {
   const jellyfinUrl = process.env.JELLYFIN_URL;
   if (!jellyfinUrl) return undefined;
 
-  // Use the item's own Primary image if available
   if (item.ImageTags?.Primary) {
     return `${jellyfinUrl}/Items/${item.Id}/Images/Primary`;
   }
-  // For episodes, fall back to the series image
   if (item.Type === "Episode" && item.SeriesId) {
     return `${jellyfinUrl}/Items/${item.SeriesId}/Images/Primary`;
   }
@@ -197,4 +198,40 @@ function formatTitle(item: JellyfinItem): string {
     return [item.SeriesName, tag, item.Name].filter(Boolean).join(" - ");
   }
   return item.Name;
+}
+
+// --- Timezone utilities ---
+// Project a UTC instant into the wall-clock fields of `tz`. Round-trip via
+// Intl, then back to UTC to find the offset; works correctly across DST.
+
+function zonedTimestamp(Y: number, M: number, D: number, h: number, m: number, s: number, tz: string): number {
+  const guess = Date.UTC(Y, M - 1, D, h, m, s);
+  const projected = projectIntoZone(guess, tz);
+  const projectedAsUtc = Date.UTC(projected.Y, projected.M - 1, projected.D, projected.h, projected.m, projected.s);
+  const offsetMs = projectedAsUtc - guess;
+  return guess - offsetMs;
+}
+
+function zonedStartOfDay(ms: number, tz: string): number {
+  const p = projectIntoZone(ms, tz);
+  return zonedTimestamp(p.Y, p.M, p.D, 0, 0, 0, tz);
+}
+
+function projectIntoZone(ms: number, tz: string): { Y: number; M: number; D: number; h: number; m: number; s: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(ms));
+  const get = (t: string) => +(parts.find((p) => p.type === t)?.value ?? "0");
+  const h = get("hour");
+  return {
+    Y: get("year"),
+    M: get("month"),
+    D: get("day"),
+    h: h === 24 ? 0 : h, // some Intl impls report 24 for midnight
+    m: get("minute"),
+    s: get("second"),
+  };
 }
