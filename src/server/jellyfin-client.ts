@@ -9,6 +9,59 @@ const authHeaders = {
 
 const FETCH_TIMEOUT_MS = 15_000;
 
+// Resolve the global stream index for an item's audio track in the requested
+// language. Jellyfin's AudioStreamIndex param is the index into
+// MediaSources[0].MediaStreams (mixing video/audio/subs), not an audio-only
+// counter. Returns null when no matching audio track exists, so the caller
+// can fall through to Jellyfin's default selection.
+const audioIndexCache = new Map<string, number | null>();
+const LANG_ALIASES: Record<string, string[]> = {
+  eng: ["eng", "en", "english"],
+  jpn: ["jpn", "ja", "japanese"],
+  spa: ["spa", "es", "spanish"],
+  fre: ["fre", "fra", "fr", "french"],
+  ger: ["ger", "deu", "de", "german"],
+};
+function languageMatches(streamLang: string | undefined, want: string): boolean {
+  if (!streamLang) return false;
+  const s = streamLang.toLowerCase();
+  const w = want.toLowerCase();
+  const aliases = LANG_ALIASES[w] || [w];
+  return aliases.includes(s);
+}
+
+export async function getAudioStreamIndex(itemId: string, language: string): Promise<number | null> {
+  if (!JELLYFIN_URL || !JELLYFIN_API_KEY) return null;
+  const cacheKey = `${itemId}:${language.toLowerCase()}`;
+  if (audioIndexCache.has(cacheKey)) return audioIndexCache.get(cacheKey)!;
+
+  try {
+    const url = `${JELLYFIN_URL}/Items?Ids=${encodeURIComponent(itemId)}&fields=MediaSources`;
+    const response = await fetch(url, {
+      headers: authHeaders,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      audioIndexCache.set(cacheKey, null);
+      return null;
+    }
+    const data = await response.json();
+    const streams = data?.Items?.[0]?.MediaSources?.[0]?.MediaStreams as
+      | Array<{ Type: string; Index: number; Language?: string }>
+      | undefined;
+    if (!streams?.length) {
+      audioIndexCache.set(cacheKey, null);
+      return null;
+    }
+    const match = streams.find(s => s.Type === "Audio" && languageMatches(s.Language, language));
+    const idx = match ? match.Index : null;
+    audioIndexCache.set(cacheKey, idx);
+    return idx;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): Promise<JellyfinItem[]> {
   if (!JELLYFIN_URL || !JELLYFIN_API_KEY) return [];
 

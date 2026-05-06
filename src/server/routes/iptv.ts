@@ -4,6 +4,7 @@ import { writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync, exists
 import { join } from "path";
 import { tmpdir } from "os";
 import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
+import { getAudioStreamIndex } from "../jellyfin-client.js";
 import { trackStreamStart, trackStreamEnd, trackError } from "../runtime-stats.js";
 import type { Channel } from "../../shared/types.js";
 
@@ -29,6 +30,47 @@ const hlsSessions = new Map<string, HlsSession>();
 const HLS_IDLE_TIMEOUT_MS = 120_000; // Kill ffmpeg after 2min with no clients
 const HLS_SEGMENT_TIME = 6; // seconds per segment
 const HLS_LIST_SIZE = 0; // 0 = keep all segments in playlist (event mode)
+
+// Per-channel PTS base time. Each batch's ffmpeg uses -output_ts_offset
+// derived from (now - base) so PTS keeps climbing across batch restarts and
+// reconnects, instead of resetting to 0 each time. Without this, every
+// reconnect makes the player jump to t=0.
+const channelPtsBase = new Map<string, number>();
+function getPtsOffsetSeconds(channelId: string): number {
+  let base = channelPtsBase.get(channelId);
+  if (base === undefined) {
+    base = Date.now();
+    channelPtsBase.set(channelId, base);
+  }
+  // Wrap every 12h to stay well inside mpegts' 33-bit PTS budget (~26.5h @ 90kHz).
+  const elapsedSec = (Date.now() - base) / 1000;
+  return elapsedSec % (12 * 3600);
+}
+
+// Re-encode every concat boundary to libx264/aac with fixed parameters.
+// Without this, -c copy passes through whatever SPS/PPS/profile/resolution
+// each Jellyfin transcode produced, and consecutive episodes can have
+// mismatched headers — decoder stalls video while audio keeps playing.
+const TRANSCODE_VIDEO_ARGS = [
+  "-c:v", "libx264",
+  "-preset", "veryfast",
+  "-tune", "zerolatency",
+  "-profile:v", "high",
+  "-level", "4.1",
+  "-pix_fmt", "yuv420p",
+  "-g", "60",
+  "-keyint_min", "60",
+  "-sc_threshold", "0",
+  "-b:v", "6000k",
+  "-maxrate", "8000k",
+  "-bufsize", "12000k",
+];
+const TRANSCODE_AUDIO_ARGS = [
+  "-c:a", "aac",
+  "-b:a", "192k",
+  "-ar", "48000",
+  "-ac", "2",
+];
 
 // Periodic cleanup of idle HLS sessions
 setInterval(() => {
@@ -132,8 +174,13 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           AudioBitRate: "192000",
           MaxWidth: "1920",
           MaxHeight: "1080",
-          AudioStreamIndex: "0",
         });
+        const audioIdx = await getAudioStreamIndex(bSlot.itemId, channel.audioLanguage);
+        if (audioIdx != null) {
+          params.set("AudioStreamIndex", String(audioIdx));
+        } else {
+          console.log(`[hls] ${channel.name}: no '${channel.audioLanguage}' audio track on ${bSlot.title} — using Jellyfin default`);
+        }
         if (i === 0 && offsetSeconds > 0) {
           params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
         }
@@ -151,6 +198,7 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
 
       const m3u8Path = join(session.dir, "stream.m3u8");
       const segmentPattern = join(session.dir, "seg_%05d.ts");
+      const ptsOffset = getPtsOffsetSeconds(channel.id);
 
       await new Promise<void>((resolve) => {
         const ffmpegArgs = [
@@ -163,11 +211,10 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           "-i", concatFile,
           "-map", "0:v:0",
           "-map", "0:a:0",
-          "-c:v", "copy",
-          "-c:a", "copy",
+          ...TRANSCODE_VIDEO_ARGS,
+          ...TRANSCODE_AUDIO_ARGS,
           "-t", String(batchDurationSec),
-          "-bsf:v", "dump_extra=freq=keyframe",
-          "-tag:v", "avc1",
+          "-output_ts_offset", String(ptsOffset),
           "-f", "hls",
           "-hls_time", String(HLS_SEGMENT_TIME),
           "-hls_list_size", String(HLS_LIST_SIZE),
@@ -512,6 +559,13 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
           params.set("MaxHeight", "1080");
         }
 
+        const audioIdx = await getAudioStreamIndex(bSlot.itemId, channel.audioLanguage);
+        if (audioIdx != null) {
+          params.set("AudioStreamIndex", String(audioIdx));
+        } else {
+          console.log(`[stream] ${channel.name}: no '${channel.audioLanguage}' audio track on ${bSlot.title} — using Jellyfin default`);
+        }
+
         // Only seek into the first slot (it's already in progress)
         if (i === 0 && offsetSeconds > 0) {
           params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
@@ -529,7 +583,8 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
       const batchDurationSec = Math.max(1, Math.floor((batchEndMs - Date.now()) / 1000));
 
       const titles = batchSlots.map((s) => s.title).join(" → ");
-      console.log(`[stream] ${channel.name}: batch of ${batchSlots.length} — ${titles} (offset ${offsetSeconds}s, wall-clock cap ${batchDurationSec}s)`);
+      const ptsOffset = getPtsOffsetSeconds(channel.id);
+      console.log(`[stream] ${channel.name}: batch of ${batchSlots.length} — ${titles} (offset ${offsetSeconds}s, wall-clock cap ${batchDurationSec}s, pts +${Math.round(ptsOffset)}s)`);
 
       // Stream this batch via ffmpeg concat — gapless transitions between episodes
       await new Promise<void>((resolve) => {
@@ -543,11 +598,10 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
           "-i", concatFile,
           "-map", "0:v:0",
           "-map", "0:a:0",
-          "-c:v", "copy",
-          "-c:a", "copy",
+          ...TRANSCODE_VIDEO_ARGS,
+          ...TRANSCODE_AUDIO_ARGS,
           "-t", String(batchDurationSec),
-          "-bsf:v", "dump_extra=freq=keyframe",
-          "-tag:v", "avc1",
+          "-output_ts_offset", String(ptsOffset),
           "-f", "mpegts",
           "-mpegts_flags", "resend_headers",
           "-flush_packets", "1",
