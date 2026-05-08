@@ -9,12 +9,13 @@ services:
     volumes:
       - vtv-data:/app/data
     environment:
-      - JELLYFIN_URL=${JELLYFIN_URL:-http://10.0.0.227:8096}
-      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:-}
+      - JELLYFIN_URL=${JELLYFIN_URL:?set in .env}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:?set in .env}
+      - BASE_URL=${BASE_URL:?set in .env to the URL clients use, e.g. http://your-host:3336}
       - PORT=3000
       - NODE_ENV=production
       - DB_PATH=/app/data/virtual-tv.db
-      - BASE_URL=http://10.0.0.227:3336
+      - SCHEDULE_TZ=${SCHEDULE_TZ:-America/Los_Angeles}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
