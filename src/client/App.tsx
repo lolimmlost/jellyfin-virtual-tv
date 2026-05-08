@@ -697,34 +697,74 @@ function ScheduleSkeleton({ compact }: { compact?: boolean }) {
   );
 }
 
-function ScheduleGuide({ channelId, maxSlots, compact }: { channelId: string; maxSlots?: number; compact?: boolean }) {
+function ScheduleGuide({ channelId, maxSlots, compact, previewChannel }: {
+  channelId: string;
+  maxSlots?: number;
+  compact?: boolean;
+  previewChannel?: Channel;
+}) {
   const [slots, setSlots] = useState<ScheduleSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const nowRef = useRef<HTMLDivElement>(null);
   const scrolledRef = useRef(false);
 
+  // Serialize previewChannel deterministically so the effect re-runs only when
+  // the relevant fields change (not on every parent re-render that builds a
+  // fresh object literal).
+  const previewKey = previewChannel
+    ? JSON.stringify({
+        f: previewChannel.filters,
+        s: previewChannel.shuffleMode,
+        i: previewChannel.id,
+      })
+    : null;
+
   useEffect(() => {
     let cancelled = false;
+    const ac = new AbortController();
     scrolledRef.current = false;
     setLoading(true);
 
     const load = async () => {
       try {
-        const r = await fetch(`/iptv/schedule/${channelId}`);
-        const data = await r.json();
+        let data: { slots?: ScheduleSlot[] };
+        if (previewChannel) {
+          const r = await fetch("/iptv/schedule/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: previewChannel }),
+            signal: ac.signal,
+          });
+          data = await r.json();
+        } else {
+          const r = await fetch(`/iptv/schedule/${channelId}`, { signal: ac.signal });
+          data = await r.json();
+        }
         if (cancelled) return;
         setSlots(data.slots || []);
         setLoading(false);
-      } catch {
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") return;
         if (!cancelled) setLoading(false);
       }
     };
 
-    load();
-    const pollId = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(pollId); };
-  }, [channelId]);
+    // Debounce in preview mode so rapid genre toggles don't spam Jellyfin.
+    let kickoff: ReturnType<typeof setTimeout> | null = null;
+    if (previewChannel) {
+      kickoff = setTimeout(load, 400);
+    } else {
+      load();
+    }
+    const pollId = previewChannel ? null : setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      ac.abort();
+      if (kickoff) clearTimeout(kickoff);
+      if (pollId) clearInterval(pollId);
+    };
+  }, [channelId, previewKey]);
 
   // Refresh the "now" marker every 15s so the NOW highlight tracks wall-clock time
   useEffect(() => {
@@ -1029,7 +1069,11 @@ function ChannelEditor({ channel, onSave, onCancel }: {
           }}>
             48h Schedule Preview
           </h3>
-          <ScheduleGuide channelId={channel.id} compact />
+          <ScheduleGuide
+            channelId={channel.id}
+            compact
+            previewChannel={{ ...channel, name, number, shuffleMode, streamMode, audioLanguage, filters }}
+          />
         </div>
       </div>
     </div>

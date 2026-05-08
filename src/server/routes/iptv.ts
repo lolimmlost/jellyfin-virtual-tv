@@ -3,7 +3,7 @@ import { spawn, execSync, type ChildProcess } from "child_process";
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync, existsSync, readdirSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { getAllChannels, getSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
+import { getAllChannels, getSchedule, generateSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
 import { getAudioStreamIndex } from "../jellyfin-client.js";
 import { trackStreamStart, trackStreamEnd, trackError } from "../runtime-stats.js";
 import type { Channel } from "../../shared/types.js";
@@ -381,6 +381,34 @@ iptvRouter.get("/schedule/:channelId", async (req, res) => {
 
   const slots = await getSchedule(channel);
   res.json({ channel: channel.name, slots });
+});
+
+// Live preview for the channel editor — runs generateSchedule against an
+// in-progress (unsaved) channel shape. Bypasses the schedule cache so previews
+// don't displace real channels' cached schedules.
+iptvRouter.post("/schedule/preview", async (req, res) => {
+  const ch = req.body?.channel as Channel | undefined;
+  if (!ch || typeof ch !== "object" || !ch.filters) {
+    res.status(400).json({ error: "channel with filters required" });
+    return;
+  }
+  // Synthesize a stable id for deterministic shuffle without touching real channels.
+  const previewChannel: Channel = {
+    id: ch.id || "preview",
+    name: ch.name || "preview",
+    number: ch.number || 0,
+    filters: ch.filters,
+    shuffleMode: ch.shuffleMode || "random",
+    streamMode: ch.streamMode || "transcode",
+    audioLanguage: ch.audioLanguage || "eng",
+    logoUrl: ch.logoUrl,
+  };
+  try {
+    const slots = await generateSchedule(previewChannel);
+    res.json({ slots });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 // ── HLS endpoints ───────────────────────────────────────────────────────
