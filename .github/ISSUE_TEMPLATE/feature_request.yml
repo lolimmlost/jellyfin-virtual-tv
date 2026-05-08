@@ -1,0 +1,79 @@
+name: Feature request
+description: Suggest a new capability or an improvement to an existing one.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with the problem you're hitting, not the solution you've already designed.
+        That gives reviewers room to suggest alternatives that might fit the codebase better.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the situation, who it affects, and why the current behavior is insufficient.
+        Concrete examples beat abstractions.
+      placeholder: |
+        I have ~40 anime episodes split across two languages. The current Audio Language setting
+        is per-channel, so I can't have a channel that prefers English dub but falls back to
+        Japanese for episodes where dub doesn't exist.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you'd like it to work, from the user's perspective.
+      placeholder: |
+        Allow audioLanguage to be a comma-separated preference list ("eng,jpn"). The server walks
+        the list and picks the first matching track. Falls through to Jellyfin's default only if
+        none of them match.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Workarounds you've tried, off-the-shelf tools that almost worked, other designs you ruled out.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app does this touch?
+      multiple: true
+      options:
+        - "Streaming / ffmpeg pipeline"
+        - "EPG / schedule generation"
+        - "Channel editor / web UI"
+        - "M3U / XMLTV / Jellyfin tuner integration"
+        - "HLS direct playback"
+        - "Deployment / configuration"
+        - "Observability / runtime stats"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How would we know it works?
+      description: |
+        A short list of observable outcomes — what a reviewer or you would check to consider
+        this feature done. Helpful even if it's just "the existing audio-fallback warning stops
+        firing for files that have a Japanese track."
+      placeholder: |
+        - Channel editor accepts "eng,jpn" in the Audio Language input
+        - For an episode with both tracks, the eng track is selected
+        - For an episode with only jpn, the jpn track is selected (no fallback warning logged)
+        - For an episode with neither, the existing fallback warning still fires
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Mockups, links to similar features in other tools, related issues.

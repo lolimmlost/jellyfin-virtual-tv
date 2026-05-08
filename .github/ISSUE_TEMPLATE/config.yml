@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Read the troubleshooting guide first
+    url: https://github.com/lolimmlost/jellyfin-virtual-tv/blob/main/README.md#troubleshooting
+    about: Stale EPG, silent audio, mismatched genres, and HEVC probe-cache issues are documented there.

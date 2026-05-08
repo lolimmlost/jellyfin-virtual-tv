@@ -1,0 +1,141 @@
+name: Bug report
+description: Something is broken — streaming, EPG, the editor, deployment, etc.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. The fields below mirror the things we end up asking for first when debugging — filling them in up front saves a round trip.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What's wrong?
+      description: One or two sentences. Save the detail for the reproduction steps below.
+      placeholder: e.g. Audio is silent on the Spongebob channel when watching via Jellyfin Android TV; video plays fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps a stranger could follow on a fresh install.
+      placeholder: |
+        1. Create a channel with these filters: ...
+        2. Open Jellyfin Android TV → Live TV → Spongebob
+        3. Press play
+        4. Notice video starts but no audio
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      multiple: true
+      options:
+        - "Streaming / playback (M3U tuner)"
+        - "Streaming / playback (HLS direct)"
+        - "EPG / guide data"
+        - "Channel editor / web UI"
+        - "Schedule / now-playing"
+        - "Deployment / Docker / Coolify"
+        - "Other / not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version (commit hash or release tag)
+      description: |
+        Run `git rev-parse --short HEAD` in the project, or check the image tag of your running container
+        (`docker ps --format '{{.Image}}' | grep virtual-tv`).
+      placeholder: "e.g. 752fc7e or v1.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How are you running it?
+      options:
+        - Coolify
+        - "docker compose (this repo's compose file)"
+        - "docker run (custom)"
+        - "npm run dev (local development)"
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: jellyfin
+    attributes:
+      label: Jellyfin server version
+      description: Dashboard → About in Jellyfin.
+      placeholder: "e.g. 10.9.11"
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: Jellyfin client (only for streaming/EPG bugs)
+      description: Build and version of the Jellyfin client experiencing the issue.
+      placeholder: "e.g. Jellyfin for Android TV 0.16.10, Swiftfin 1.1.5, jellyfin-web 10.9.11"
+
+  - type: textarea
+    id: channel
+    attributes:
+      label: Channel settings (only for streaming/schedule bugs)
+      description: |
+        Paste the relevant channel's settings — filters, shuffle mode, stream mode, audio language.
+        You can grab these from `GET /api/channels` or by editing the channel and copying the form values.
+      render: yaml
+      placeholder: |
+        name: Spongebob
+        filters:
+          titleMatch: "SpongeBob"
+        shuffleMode: random
+        streamMode: transcode
+        audioLanguage: eng
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs around the failure
+      description: |
+        Last ~100 lines from the virtual-tv container (`docker logs --tail 100 <container>`).
+        For streaming bugs, include the `[stream]`/`[hls]` line for the affected channel and any `[stream] ffmpeg exited` lines that follow.
+
+        Redact JELLYFIN_URL/API key if they appear.
+      render: text
+      placeholder: |
+        2026-05-08T01:23:45.123Z [stream] Spongebob: batch of 3 — ...
+        2026-05-08T01:23:46.012Z [stream] ffmpeg exited 1 for Spongebob — ...
+
+  - type: textarea
+    id: ffprobe
+    attributes:
+      label: Source media probe (only for audio/codec bugs)
+      description: |
+        For audio language or codec issues, run `ffprobe` on one of the source files:
+        `ffprobe -show_streams -show_format -of json '<file>'`
+        and paste the relevant `streams[]` entries (codec_name, codec_type, channels, tags.language).
+      render: json
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, browser console errors, network captures, prior incidents that might be related.
