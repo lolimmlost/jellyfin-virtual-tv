@@ -220,7 +220,16 @@ export default function App() {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.35; }
         }
+        @keyframes vtShimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
         .vt-fadein { animation: vtFadeIn 0.22s ease-out both; }
+        .vt-skeleton-bar {
+          background: linear-gradient(90deg, #252525 0%, #333 50%, #252525 100%);
+          background-size: 200% 100%;
+          animation: vtShimmer 1.4s linear infinite;
+        }
         body { scrollbar-color: #3a3a3a #141414; scrollbar-width: thin; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-track { background: #141414; }
@@ -684,12 +693,12 @@ function ScheduleSkeleton({ compact }: { compact?: boolean }) {
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} style={{
           display: "flex", gap: compact ? 8 : 12, alignItems: "center",
-          paddingLeft: 8, opacity: 0.5 - i * 0.05,
+          paddingLeft: 8, opacity: 0.6 - i * 0.04,
         }}>
-          <div style={{ width: compact ? 48 : 64, height: rowH, background: c.surfaceAlt, border: `2px solid ${c.border}20` }} />
+          <div className="vt-skeleton-bar" style={{ width: compact ? 48 : 64, height: rowH, border: `2px solid ${c.border}20` }} />
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ height: 10, width: `${60 + (i * 7) % 35}%`, background: c.surfaceAlt }} />
-            <div style={{ height: 8, width: "40%", background: c.surfaceAlt, opacity: 0.7 }} />
+            <div className="vt-skeleton-bar" style={{ height: 10, width: `${60 + (i * 7) % 35}%` }} />
+            <div className="vt-skeleton-bar" style={{ height: 8, width: "40%", opacity: 0.7 }} />
           </div>
         </div>
       ))}
