@@ -17,9 +17,9 @@ COPY --from=builder /app/package.json ./
 # Bake the commit SHA and build timestamp into the image so /health can report
 # what's running. Pass --build-arg GIT_SHA=$(git rev-parse --short HEAD); on
 # Coolify, configure the build arg to use $SOURCE_COMMIT.
+# BUILD_DATE is computed at build time via `date` — no need to pass it.
 ARG GIT_SHA=unknown
-ARG BUILD_DATE=unknown
-RUN printf '{"version":"%s","builtAt":"%s"}\n' "$GIT_SHA" "$BUILD_DATE" > /app/version.json
+RUN printf '{"version":"%s","builtAt":"%s"}\n' "$GIT_SHA" "$(date -u +%FT%TZ)" > /app/version.json
 
 VOLUME ["/app/data"]
 ENV DB_PATH=/app/data/virtual-tv.db

@@ -84,15 +84,14 @@ BASE_URL=http://your-host:3336      # External URL clients will use for streams
 ### 2. Run with Docker Compose
 
 ```bash
-docker compose up -d --build --build-arg GIT_SHA=$(git rev-parse --short HEAD) --build-arg BUILD_DATE=$(date -u +%FT%TZ)
+docker compose up -d --build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
 ```
 
-The build args bake the commit SHA + build timestamp into the image so `GET /health` can report what's running — useful when filing bugs. They're optional; without them `/health` reports `version: "unknown"`.
+The `GIT_SHA` build arg bakes the commit hash into the image so `GET /health` can report what's running — useful when filing bugs. The build timestamp is captured automatically by the Dockerfile. The arg is optional; without it `/health` reports `version: "unknown"`.
 
-On **Coolify**, set the build args in the application's Build settings:
+On **Coolify**, add a single build arg in the application's Build settings:
 
 - `GIT_SHA` = `$SOURCE_COMMIT`
-- `BUILD_DATE` = `$(date -u +%FT%TZ)` (or leave blank)
 
 The app will be available at `http://your-host:3336`. Verify the version with `curl http://your-host:3336/health`.
 
