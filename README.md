@@ -84,10 +84,17 @@ BASE_URL=http://your-host:3336      # External URL clients will use for streams
 ### 2. Run with Docker Compose
 
 ```bash
-docker compose up -d
+docker compose up -d --build --build-arg GIT_SHA=$(git rev-parse --short HEAD) --build-arg BUILD_DATE=$(date -u +%FT%TZ)
 ```
 
-The app will be available at `http://your-host:3336`.
+The build args bake the commit SHA + build timestamp into the image so `GET /health` can report what's running — useful when filing bugs. They're optional; without them `/health` reports `version: "unknown"`.
+
+On **Coolify**, set the build args in the application's Build settings:
+
+- `GIT_SHA` = `$SOURCE_COMMIT`
+- `BUILD_DATE` = `$(date -u +%FT%TZ)` (or leave blank)
+
+The app will be available at `http://your-host:3336`. Verify the version with `curl http://your-host:3336/health`.
 
 ### 3. Add to Jellyfin
 

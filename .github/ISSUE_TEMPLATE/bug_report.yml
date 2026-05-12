@@ -57,11 +57,18 @@ body:
   - type: input
     id: version
     attributes:
-      label: Version (commit hash or release tag)
+      label: Version (commit hash + build date)
       description: |
-        Run `git rev-parse --short HEAD` in the project, or check the image tag of your running container
-        (`docker ps --format '{{.Image}}' | grep virtual-tv`).
-      placeholder: "e.g. 752fc7e or v1.2.0"
+        Run `curl http://your-host:3336/health` and paste the `version` and `builtAt` fields.
+        Example response: `{"status":"ok","version":"752fc7e","builtAt":"2026-05-08T00:23:08Z"}`.
+
+        Fallbacks if the server isn't reachable:
+        - `docker ps --format '{{.Image}}'` (image tag may include the commit on Coolify builds)
+        - `git rev-parse --short HEAD` if running from source via `npm run dev`
+
+        If you see `version: unknown`, your image was built without `--build-arg GIT_SHA=...` —
+        please rebuild and re-test before filing.
+      placeholder: "752fc7e (built 2026-05-08T00:23:08Z)"
     validations:
       required: true
 

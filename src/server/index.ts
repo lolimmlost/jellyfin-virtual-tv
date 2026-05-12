@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
 import cors from "cors";
 import "./db.js"; // Initialize database on startup
 import { jellyfinRouter } from "./routes/jellyfin.js";
@@ -14,6 +15,24 @@ if (!process.env.JELLYFIN_URL || !process.env.JELLYFIN_API_KEY) {
   console.warn("WARNING: JELLYFIN_URL and/or JELLYFIN_API_KEY not set. Jellyfin features will be unavailable.");
 }
 
+// Load the build-time version stamp baked in by the Dockerfile. Falls back
+// to "unknown" outside Docker (e.g. `npm run dev`) where the file isn't present.
+const versionInfo: { version: string; builtAt: string } = (() => {
+  try {
+    const filename = fileURLToPath(import.meta.url);
+    const candidates = [
+      path.join(path.dirname(filename), "../../version.json"),
+      "/app/version.json",
+    ];
+    for (const p of candidates) {
+      try {
+        return JSON.parse(readFileSync(p, "utf8"));
+      } catch {}
+    }
+  } catch {}
+  return { version: "unknown", builtAt: "unknown" };
+})();
+
 const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -23,7 +42,7 @@ app.use(express.json());
 
 // Health check (simple — used by Docker HEALTHCHECK)
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+  res.json({ status: "ok", ...versionInfo });
 });
 
 // Detailed health — used by auto-polish runner and diagnostics
@@ -66,6 +85,7 @@ app.get("/health/detailed", async (_req, res) => {
 
   res.json({
     status: "ok",
+    ...versionInfo,
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     channels: { total: channels.length, withSchedule, empty: emptyChannels },
