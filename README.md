@@ -87,11 +87,7 @@ BASE_URL=http://your-host:3336      # External URL clients will use for streams
 docker compose up -d --build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
 ```
 
-The `GIT_SHA` build arg bakes the commit hash into the image so `GET /health` can report what's running — useful when filing bugs. The build timestamp is captured automatically by the Dockerfile. The arg is optional; without it `/health` reports `version: "unknown"`.
-
-On **Coolify**, add a single build arg in the application's Build settings:
-
-- `GIT_SHA` = `$SOURCE_COMMIT`
+`GET /health` reports the running version so you can check what's deployed (`curl http://your-host:3336/health`). On **Coolify**, no setup is needed — Coolify exposes `SOURCE_COMMIT` as a runtime env var automatically and the server picks it up. For plain `docker compose`, the `GIT_SHA` build arg above bakes it in; without it `/health` reports `version: "unknown"`.
 
 The app will be available at `http://your-host:3336`. Verify the version with `curl http://your-host:3336/health`.
 

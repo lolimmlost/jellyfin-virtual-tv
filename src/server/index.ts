@@ -15,22 +15,30 @@ if (!process.env.JELLYFIN_URL || !process.env.JELLYFIN_API_KEY) {
   console.warn("WARNING: JELLYFIN_URL and/or JELLYFIN_API_KEY not set. Jellyfin features will be unavailable.");
 }
 
-// Load the build-time version stamp baked in by the Dockerfile. Falls back
-// to "unknown" outside Docker (e.g. `npm run dev`) where the file isn't present.
+// Resolve the running version. Priority:
+//   1. SOURCE_COMMIT env (Coolify exposes this automatically at runtime)
+//   2. version.json baked in by the Dockerfile (--build-arg GIT_SHA=...)
+//   3. "unknown" (e.g. `npm run dev` with no .env override)
 const versionInfo: { version: string; builtAt: string } = (() => {
-  try {
-    const filename = fileURLToPath(import.meta.url);
-    const candidates = [
-      path.join(path.dirname(filename), "../../version.json"),
-      "/app/version.json",
-    ];
-    for (const p of candidates) {
-      try {
-        return JSON.parse(readFileSync(p, "utf8"));
-      } catch {}
-    }
-  } catch {}
-  return { version: "unknown", builtAt: "unknown" };
+  const fromFile: { version?: string; builtAt?: string } = (() => {
+    try {
+      const filename = fileURLToPath(import.meta.url);
+      const candidates = [
+        path.join(path.dirname(filename), "../../version.json"),
+        "/app/version.json",
+      ];
+      for (const p of candidates) {
+        try {
+          return JSON.parse(readFileSync(p, "utf8"));
+        } catch {}
+      }
+    } catch {}
+    return {};
+  })();
+  const sourceCommit = process.env.SOURCE_COMMIT;
+  const version = sourceCommit ? sourceCommit.slice(0, 7) : (fromFile.version || "unknown");
+  const builtAt = fromFile.builtAt || "unknown";
+  return { version, builtAt };
 })();
 
 const app = express();
