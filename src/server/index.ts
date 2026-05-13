@@ -15,6 +15,15 @@ if (!process.env.JELLYFIN_URL || !process.env.JELLYFIN_API_KEY) {
   console.warn("WARNING: JELLYFIN_URL and/or JELLYFIN_API_KEY not set. Jellyfin features will be unavailable.");
 }
 
+// Validate BASE_URL — it gets baked into M3U stream URLs, so a malformed value
+// silently breaks Jellyfin's tuner integration. If it doesn't look like
+// scheme://host, drop it so the IPTV routes fall back to per-request detection
+// and log a loud warning rather than serving broken URLs.
+if (process.env.BASE_URL && !/^https?:\/\/[^\s/]+/i.test(process.env.BASE_URL)) {
+  console.warn(`WARNING: BASE_URL is not a valid URL (got: "${process.env.BASE_URL}"). Ignoring it and falling back to request-based detection. Set BASE_URL to something like "http://your-host:3336".`);
+  delete process.env.BASE_URL;
+}
+
 // Resolve the running version. Priority:
 //   1. SOURCE_COMMIT env (Coolify exposes this automatically at runtime)
 //   2. version.json baked in by the Dockerfile (--build-arg GIT_SHA=...)

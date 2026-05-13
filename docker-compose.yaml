@@ -9,9 +9,12 @@ services:
     volumes:
       - vtv-data:/app/data
     environment:
-      - JELLYFIN_URL=${JELLYFIN_URL:?set in .env}
-      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY:?set in .env}
-      - BASE_URL=${BASE_URL:?set in .env to the URL clients use, e.g. http://your-host:3336}
+      # Required: set these in your .env (or Coolify Environment Variables UI).
+      # Coolify does NOT honour docker-compose's ${VAR:?error} shorthand and
+      # would store the error text as the value, producing broken M3U/EPG URLs.
+      - JELLYFIN_URL=${JELLYFIN_URL}
+      - JELLYFIN_API_KEY=${JELLYFIN_API_KEY}
+      - BASE_URL=${BASE_URL}
       - PORT=3000
       - NODE_ENV=production
       - DB_PATH=/app/data/virtual-tv.db
