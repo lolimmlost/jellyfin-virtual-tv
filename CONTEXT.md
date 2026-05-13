@@ -1,11 +1,15 @@
 # Jellyfin Virtual TV — Project Context
 
+> This is the design/context doc — why the project exists, what we evaluated, how it's architected, and how it deploys. For end-user setup and API reference, see [README.md](README.md).
+
 ## What This Is
 A standalone sidecar app that creates virtual "live TV" channels from your Jellyfin media library. Channels have configurable themes (e.g., Cartoon Network, Anime, Comedy, Dog Channel) and appear in Jellyfin's built-in Live TV guide with a full EPG.
 
 Also serves as a documented, teachable project for React / app-building courses. Every architectural decision is explainable. The build-and-deploy pipeline is part of the curriculum.
 
 **Repo:** github.com/lolimmlost/jellyfin-virtual-tv
+
+**Status (2026-05):** Phase 1 MVP is complete and running in production at `10.0.0.227:3336` with 28 channels feeding a Jellyfin instance at `10.0.0.30:8097`. Streaming pipeline went through several iterations after MVP — see "Streaming Pipeline Evolution" below.
 
 ## Why This Exists
 - ErsatzTV (closest prior art, C#, ~155K lines) — archived Feb 2026, maintainer burned out from scope creep
@@ -42,12 +46,14 @@ We evaluated three paths:
 
 ### How It Works
 1. Sidecar queries Jellyfin's library via REST API (permanent API key)
-2. Builds 24h rolling schedules per channel based on filter rules
+2. Builds **48h** rolling schedules per channel from filter rules. The schedule engine is a **pure function of `(channel, wall-clock time)`** against a fixed anchor — restarts and redeploys never desync the schedule, and the EPG and stream pointer always agree.
 3. Serves M3U playlist + XMLTV EPG at HTTP endpoints
 4. Jellyfin adds these as an IPTV tuner + guide provider
-5. When user tunes in, Jellyfin hits sidecar's stream URL
-6. Sidecar spawns ffmpeg, reads media file at correct schedule offset, streams MPEG-TS/HLS back
-7. Multiple viewers on same channel share one ffmpeg process (HLS segments)
+5. When a client tunes in, Jellyfin hits sidecar's stream URL
+6. Sidecar builds a **3-episode concat batch** per ffmpeg invocation, capped at the wall-clock end of the last slot. ffmpeg pulls each item from Jellyfin (with `AudioStreamIndex` resolved to the channel's preferred language), **re-encodes to fixed H.264 high@4.1 + AAC LC stereo**, and applies a per-channel `-output_ts_offset` so PTS keeps climbing across batch restarts (reconnects don't rewind the player).
+7. Two output paths exist:
+   - **`/iptv/stream/:id`** — raw MPEG-TS over chunked HTTP. Per-client ffmpeg. Used by Jellyfin's IPTV tuner (which then re-transcodes for each downstream client).
+   - **`/iptv/hls/:id/stream.m3u8`** — HLS playlist + segment files. One ffmpeg per channel, multiple clients can share segments. Used for direct iOS / Swiftfin / web playback.
 
 ### Key Integration Points
 - **Jellyfin REST API** — `/Items` endpoint for library queries (genres, tags, folders, media types), `/Library/VirtualFolders` for library listing. Auth via permanent API key (`Authorization: MediaBrowser Token="KEY"`)
@@ -58,39 +64,50 @@ We evaluated three paths:
 ## Tech Stack
 - **Frontend:** React 18 + TypeScript
 - **Backend:** Express + TypeScript (Node 22)
-- **Database:** SQLite via better-sqlite3
+- **Database:** SQLite via better-sqlite3 (channels table)
 - **Build:** Vite (client) + tsc (server)
-- **Dev:** tsx watch (server hot-reload) + Vite dev server (client HMR)
-- **Streaming:** ffmpeg (spawned as child processes)
-- **XML:** fast-xml-parser (for XMLTV generation)
-- **Deploy:** Docker Compose on Coolify
+- **Dev:** tsx watch (server hot-reload) + Vite dev server (client HMR, port 5173 with `/api` + `/iptv` proxy to 3000)
+- **Streaming:** ffmpeg (libx264 veryfast + AAC LC) via concat demuxer, spawned as child processes
+- **XML:** Hand-built XMLTV emitter (no fast-xml-parser dep — XMLTV is small and append-only)
+- **Deploy:** Docker Compose on Coolify (auto-deploys on push to `main`)
 
 ## Project Structure (Current)
 
 ```
 jellyfin-virtual-tv/
   docker-compose.yaml      # Coolify deployment — single sidecar service
-  Dockerfile               # Multi-stage: Node 22 build + ffmpeg runtime
-  .dockerignore             # Keeps node_modules/.git out of Docker context
+  Dockerfile               # Multi-stage: Node 22 build + ffmpeg runtime; bakes GIT_SHA into version.json
+  .dockerignore            # Keeps node_modules/.git out of Docker context
   package.json             # All deps, scripts: dev/build/start
   package-lock.json        # Exact dep versions — required for npm ci
   tsconfig.json            # TS config: ES2022, ESNext modules, strict
   vite.config.ts           # Vite: React plugin, API proxy, builds to dist/client
   index.html               # Vite entry — loads main.tsx
-  .env.example             # JELLYFIN_URL, JELLYFIN_API_KEY, PORT
+  .env.example             # JELLYFIN_URL, JELLYFIN_API_KEY, BASE_URL, PORT, DB_PATH, SCHEDULE_TZ, CORS_ORIGIN
   .gitignore
+  .github/
+    ISSUE_TEMPLATE/
+      bug_report.yml       # Structured bug report form (asks for /health version)
+      feature_request.yml  # Feature request with required acceptance criteria
+      config.yml           # Disables blank issues, links to README troubleshooting
   docs/
     lesson-01-zero-to-deployed.md
+    lesson-03-channel-crud-sqlite.md
+    *.png                  # README screenshots
   src/
     server/
-      index.ts             # Express app: health, API routes, static serving
+      index.ts             # Express entry, /health + /health/detailed, BASE_URL validation, version.json read
+      db.ts                # SQLite schema + migrations (channels table)
+      schedule.ts          # 48h pure-function schedule engine, deterministic shuffle, schedule cache
+      jellyfin-client.ts   # Jellyfin API queries + getAudioStreamIndex (language→stream index)
+      runtime-stats.ts     # Stream/error counters surfaced via /health/detailed
       routes/
-        channels.ts        # Channel CRUD (stub)
-        iptv.ts            # M3U, XMLTV, stream endpoints (stub)
-        jellyfin.ts        # Jellyfin API proxy (stub)
+        channels.ts        # Channel CRUD + POST /preview (filter result counting)
+        iptv.ts            # M3U, XMLTV, MPEG-TS stream, HLS, schedule + schedule preview
+        jellyfin.ts        # Status, libraries, genres, tags, items proxy
     client/
       main.tsx             # React bootstrap: createRoot + StrictMode
-      App.tsx              # Root component: fetches channels, shows list
+      App.tsx              # Channel list, editor, QuickCreate, live schedule preview, EPG guide
     shared/
       types.ts             # Channel, ChannelFilter, ScheduleSlot, JellyfinItem
 ```
@@ -124,6 +141,10 @@ jellyfin-virtual-tv/
 3. **Port 3000 already in use** — another service had it. Changed external port to 3336 (`3336:3000`).
 4. **`Cannot GET /`** — Express served API routes but not the React build. Added `express.static()` + `*` catch-all for client-side routing fallback.
 5. **Heredoc artifacts in files** — remote file creation via SSH heredocs left trailing `ENDOFFILE'` in config files, breaking the build. Verified by running `npm run build` before pushing.
+6. **Coolify doesn't honor `${VAR:?error}`** — docker-compose's strict-mode default syntax (`${BASE_URL:?set in .env}`) is interpreted by Coolify as a literal default value. Result: `BASE_URL` got set to the entire error message string, M3U URLs became garbage, Jellyfin registered zero tuners. Fix: use plain `${VAR}` and validate at server startup with a loud warning.
+7. **Silent audio on Android TV** — `-c:a copy` across concat batches passes through whatever per-episode codec_priv Jellyfin produced. Mismatched profiles (AAC stereo + EAC3 5.1) cause some decoders to silently drop audio while video keeps playing. Fix: re-encode audio uniformly to AAC LC stereo at every batch boundary.
+8. **EPG silently empty after deploy** — Jellyfin's "Refresh Guide" task only populates programmes for channels it already knows about. Refresh Channels (which discovers them via M3U) must run first. Out of order = blank guide.
+9. **PTS resets at every batch** — without `-output_ts_offset`, each new ffmpeg invocation starts PTS at 0, and the player rewinds on every reconnect. Fix: maintain a per-channel base time, derive offset from `(now - base) mod 12h` (12h wrap stays inside mpegts' 33-bit budget).
 
 ### Key Dev Patterns
 - **Two servers in dev:** Vite (5173, HMR) + Express (3000, API). Vite proxy forwards `/api/*` and `/iptv/*` to Express.
@@ -133,45 +154,39 @@ jellyfin-virtual-tv/
 
 ## Course Lesson Structure
 
-### Lesson 1: Zero to Deployed (COMPLETE)
-**File:** `docs/lesson-01-zero-to-deployed.md`
-**Covers:** Project scaffold, every file explained, React basics (state, effects, fetch), Express routing, TypeScript config, Vite proxy, multi-stage Docker, Coolify deployment, real deployment bugs
-**Exercises:** Add status endpoint, show it in React, shared types, break the health check
+The course material is paused — the production app outpaced the lesson plan. Lessons 1 and 3 were written before the major streaming-pipeline iteration; lessons 2, 4, 5, 6 were never written. If lessons resume, they need to be rebuilt from the current codebase rather than the original outline.
 
-### Lesson 2: Connecting to Jellyfin (NEXT)
-**Covers:** Jellyfin REST API, API keys, querying libraries and items, filtering by genre/tags, displaying media in React, environment variables in practice
+### Written
+- **Lesson 1: Zero to Deployed** — `docs/lesson-01-zero-to-deployed.md`. Project scaffold, every file explained, React basics (state, effects, fetch), Express routing, TypeScript config, Vite proxy, multi-stage Docker, Coolify deployment, real deployment bugs.
+- **Lesson 3: Channel CRUD + SQLite** — `docs/lesson-03-channel-crud-sqlite.md`. Database setup, channel creation/editing, filter configuration UI, React forms, data persistence.
 
-### Lesson 3: Channel CRUD + SQLite
-**Covers:** Database setup, channel creation/editing, filter configuration UI, React forms, data persistence
+### Originally Planned (not written)
+Lesson 2 (Jellyfin API), Lesson 4 (Schedule engine), Lesson 5 (M3U + XMLTV), Lesson 6 (FFmpeg). The actual implementation diverged significantly from the original outline — the schedule engine became a pure function of wall-clock time, ffmpeg uses concat-with-re-encode rather than per-file seek, etc.
 
-### Lesson 4: Schedule Engine
-**Covers:** Building 24h rolling schedules from filtered media, time arithmetic, deterministic shuffle, schedule state management
+## Phase 1 Scope (MVP) — COMPLETE
 
-### Lesson 5: M3U + XMLTV Generation
-**Covers:** IPTV standards, generating M3U playlists, XMLTV EPG format, registering with Jellyfin as a tuner
+All shipped:
+- Docker Compose with sidecar container, deployed via Coolify ✅
+- React web config UI for channel CRUD + filter setup ✅
+- 28 virtual channels in production (planned: 1-5) ✅
+- Filter rules: genre, tag, title match, folder/library, item type, exclude lists ✅
+- Shuffle mode: random or sequential ✅
+- Schedule engine: 48h rolling, deterministic, pure function of wall-clock time ✅
+- ffmpeg pipeline: 3-episode concat batches, re-encode to H.264 + AAC LC, PTS-stable across reconnects ✅
+- M3U + XMLTV generation ✅
+- Jellyfin Live TV integration with auto-populated channel logos ✅
 
-### Lesson 6: FFmpeg Streaming
-**Covers:** Spawning ffmpeg processes, seek offset calculation, HLS segment generation, process lifecycle, crash recovery
+## Phase 2 (mostly future)
 
-## Phase 1 Scope (MVP)
-- Docker Compose with sidecar container (Jellyfin is pre-existing)
-- Web config UI (React) for channel CRUD + filter setup
-- 1-5 virtual channels, each with:
-  - Name (e.g., "Cartoon Network")
-  - Filter rules: genre, tag, title match, folder/library
-  - Shuffle mode: random or sequential
-- Schedule engine: 24h rolling schedule, fills timeline from filtered media
-- ffmpeg pipeline: reads source file at offset, outputs HLS segments
-- M3U + XMLTV generation served at HTTP endpoints
-- Jellyfin sees channels in Live TV guide, users tune in and watch
-
-## Phase 2 (Future, Not Now)
-- HDHomeRun emulation for auto-discovery
-- Channel bumps / filler between shows
-- Advanced scheduling (time slots, blocks, padding to :00/:30)
-- Hardware-accelerated transcoding (NVENC, QSV, VAAPI)
-- Multi-server support (Plex, Emby)
-- Watermarks / channel logos overlay
+- HDHomeRun emulation for auto-discovery — **not started**
+- Channel bumps / filler between shows — **not started**
+- Advanced scheduling (time slots, blocks, padding to :00/:30) — **not started** (all current schedules are back-to-back)
+- Hardware-accelerated transcoding (NVENC, QSV, VAAPI) — **delegated to Jellyfin** (we ask for `VideoCodec=h264` in the URL params; Jellyfin's GPU pipeline handles HEVC→H.264 before our concat ffmpeg sees the bytes)
+- Multi-server support (Plex, Emby) — **not started**
+- Watermarks / channel logos overlay — **partially**: channel logos appear in the M3U/EPG so Jellyfin shows them in the guide, but no on-stream overlay
+- Per-channel audio language preference — **shipped** (was originally Phase 2-ish; turned out to be a daily-driver requirement once anime channels existed)
+- Smart QuickCreate (keyword → filters parser) — **shipped**
+- Live schedule preview in the editor — **shipped**
 
 ## What to Study from Prior Art
 
@@ -226,10 +241,44 @@ http://sidecar:3000/iptv/stream/ch1
 </tv>
 ```
 
-### ffmpeg Stream Command (conceptual)
+### ffmpeg Stream Command (current)
+
+The MVP plan was per-file ffmpeg with `-ss` seek, but episode boundaries glitched and reconnects rewound the player. The current pipeline uses Jellyfin's transcoding endpoint as the input (so we benefit from Jellyfin's GPU) and a concat playlist of 3 batched episodes capped at the wall-clock end:
+
 ```bash
-ffmpeg -ss <offset> -i /media/movies/movie.mkv \
-  -c:v libx264 -c:a aac -f mpegts \
-  -hls_time 6 -hls_list_size 10 \
+# concat.txt holds 3 lines like:
+# file 'http://jellyfin:8096/Videos/<id>/stream.ts?VideoCodec=h264&AudioCodec=aac&AudioStreamIndex=N&...'
+
+ffmpeg -fflags +igndts+genpts+discardcorrupt \
+  -f concat -safe 0 -protocol_whitelist file,http,https,tcp,tls \
+  -probesize 1048576 -analyzeduration 2000000 \
+  -i concat.txt \
+  -map 0:v:0 -map 0:a:0 \
+  -c:v libx264 -preset veryfast -tune zerolatency \
+  -profile:v high -level 4.1 -pix_fmt yuv420p \
+  -g 60 -keyint_min 60 -sc_threshold 0 \
+  -b:v 6000k -maxrate 8000k -bufsize 12000k \
+  -c:a aac -b:a 192k -ar 48000 -ac 2 \
+  -t <batchDurationSec> \
+  -output_ts_offset <ptsOffsetSec> \
+  -f mpegts -mpegts_flags resend_headers -flush_packets 1 \
   pipe:1
 ```
+
+**Why this shape:**
+- **Concat with re-encode** (not `-c copy`) so heterogeneous per-episode codec_priv can't desync audio decoders downstream.
+- **`-t batchDuration`** caps ffmpeg at the schedule's wall-clock boundary, so transcoding speed differences can't drift the stream out of sync with the EPG.
+- **`-output_ts_offset`** keeps PTS climbing across batch restarts; without it, every reconnect makes the player jump to t=0.
+- **`AudioStreamIndex=N`** in each Jellyfin URL is resolved server-side from `MediaSources[0].MediaStreams` to the index whose `Language` matches `channel.audioLanguage` (with eng/en/english aliasing).
+- **HLS variant** swaps `-f mpegts ... pipe:1` for `-f hls -hls_time 6 -hls_list_size 0 -hls_flags append_list+omit_endlist+program_date_time` writing to a temp dir; one ffmpeg per channel, multiple HTTP clients can read the same segments.
+
+## Streaming Pipeline Evolution
+
+A short history of why the pipeline ended up where it did, since the commit log alone doesn't explain it:
+
+1. **Per-file ffmpeg with `-ss` seek** (initial MVP) — worked for one episode but had a visible gap and stream-end at every boundary.
+2. **Single-process episode chaining** — fixed the gaps but accumulated drift; the stream got further behind the EPG with every transition.
+3. **Concat demuxer with `-c copy`** — gapless transitions, no drift, much cheaper. Two failure modes emerged: video stalled at boundaries when SPS/PPS changed, and on Android TV the audio decoder silently dropped when codec_priv changed mid-stream.
+4. **Concat demuxer with full re-encode** (current) — fixed both. Cost: one libx264 `veryfast` encoder per active stream. CPU is fine on the deploy box.
+5. **Per-channel PTS offset** (current) — added because reconnects were rewinding the player to t=0.
+6. **HLS endpoint** (current, parallel) — added for direct iOS/Swiftfin/web playback without going through Jellyfin's tuner indirection.
