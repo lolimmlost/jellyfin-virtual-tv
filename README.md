@@ -10,6 +10,8 @@ Virtual live TV channels from your Jellyfin media library. Turn your media colle
 - **EPG Guide** — Full XMLTV electronic program guide with thumbnails, integrated directly into Jellyfin's Live TV
 - **M3U Tuner** — Standard IPTV tuner format, works natively with Jellyfin Live TV
 - **Smart Filtering** — Filter content by library, genre, tags, item type (Movies/Episodes), or comma-separated title match
+- **Smart QuickCreate** — Type natural-language keywords (`horror comedy no anime movies only`) and the parser auto-builds filters by matching against your Jellyfin genres and tags
+- **Live Schedule Preview** — The channel editor shows what your 48-hour schedule will look like as you toggle filters (debounced, animated skeleton during refresh)
 - **Genre Picker** — Autocomplete genre selection pulled directly from your Jellyfin library, with custom genre support
 - **48-Hour Scheduling** — Deterministic schedules covering all timezones, with random or sequential shuffle modes, regenerated hourly
 - **GPU Transcoding** — Offloads HEVC/H264 transcoding to Jellyfin's GPU for seamless mixed-codec playback
@@ -53,6 +55,7 @@ Channels appear natively in Jellyfin's Live TV with full EPG data, thumbnails, a
 | Frontend | React 18 + Vite |
 | Database | SQLite (better-sqlite3) |
 | Language | TypeScript (strict) |
+| Streaming | FFmpeg (concat demuxer + libx264 + AAC LC) |
 | Container | Docker (multi-stage build) |
 
 ## Quick Start
@@ -87,25 +90,57 @@ BASE_URL=http://your-host:3336      # External URL clients will use for streams
 docker compose up -d --build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
 ```
 
-`GET /health` reports the running version so you can check what's deployed (`curl http://your-host:3336/health`). On **Coolify**, no setup is needed — Coolify exposes `SOURCE_COMMIT` as a runtime env var automatically and the server picks it up. For plain `docker compose`, the `GIT_SHA` build arg above bakes it in; without it `/health` reports `version: "unknown"`.
+The `GIT_SHA` build arg bakes the commit hash into the image so `/health` can report what's running. The arg is optional; without it `/health` reports `version: "unknown"`.
 
-The app will be available at `http://your-host:3336`. Verify the version with `curl http://your-host:3336/health`.
+Verify the deploy:
+
+```bash
+curl http://your-host:3336/health
+# {"status":"ok","version":"752fc7e","builtAt":"2026-05-12T02:02:22Z"}
+```
+
+#### Deploying with Coolify
+
+Configure the application in Coolify, then in **Environment Variables** add:
+
+| Variable | Scope |
+|---|---|
+| `JELLYFIN_URL` | Runtime |
+| `JELLYFIN_API_KEY` | Runtime |
+| `BASE_URL` | Runtime |
+
+No build args are needed — Coolify exposes `SOURCE_COMMIT` automatically at runtime and the server reads it for `/health` reporting.
+
+**Important:** if you forget to set `BASE_URL`, the server now logs a loud warning at startup and falls back to per-request URL detection. Older builds silently produced broken M3U URLs (Jellyfin would register zero tuners). Always set `BASE_URL` explicitly to the URL Jellyfin and your IPTV clients use to reach this app.
 
 ### 3. Add to Jellyfin
 
-In Jellyfin, go to **Dashboard > Live TV**:
+In Jellyfin, go to **Dashboard → Live TV**:
 
 **Add Tuner:**
 - Type: M3U Tuner
 - URL: `http://your-host:3336/iptv/channels.m3u`
+- Save
 
 **Add Guide Provider:**
 - Type: XMLTV
 - URL: `http://your-host:3336/iptv/epg.xml`
+- Save, then enable it for the M3U tuner you just added
+
+**Populate the guide:**
+
+1. **Dashboard → Scheduled Tasks → Refresh Channels** (discovers channels from the M3U)
+2. **Dashboard → Scheduled Tasks → Refresh Guide** (pulls programmes for those channels)
+
+Order matters — Refresh Guide before Refresh Channels does nothing because Jellyfin has no channels to attach programmes to. Both tasks run on a schedule afterwards.
 
 ### 4. Create channels
 
-Open the web UI at `http://your-host:3336` and create your channels. Each channel can be configured with:
+Open the web UI at `http://your-host:3336` and create your channels.
+
+**Smart QuickCreate** lets you type natural-language keywords (`horror comedy no anime movies only`) and the parser auto-builds filters by matching against your Jellyfin genres and tags, with a live preview of how many items match.
+
+For full control, use the channel editor. Each channel can be configured with:
 
 **Content Filters:**
 - **Libraries** — Pick which Jellyfin libraries to pull from
@@ -114,23 +149,36 @@ Open the web UI at `http://your-host:3336` and create your channels. Each channe
 - **Tags** — Any Jellyfin tags you've set up
 - **Title Match** — Comma-separated series/movie names (e.g., "SpongeBob, Simpsons, Futurama")
 
+The right-hand pane shows a live 48-hour schedule preview that rebuilds (with a shimmering skeleton) every time you change a filter, so you can see what the channel will play before saving.
+
 **Playback Settings:**
 - **Shuffle Mode** — Random (different order daily) or Sequential (plays in series order)
 - **Stream Mode** — Transcode (normalizes to H.264+AAC for mixed-codec libraries) or Passthrough (original codecs)
 - **Audio Language** — Preferred audio track language per channel (e.g., Japanese for anime channels)
 
-After creating channels, refresh the guide data in Jellyfin to see them in the Live TV guide.
+After creating channels, run **Refresh Channels** then **Refresh Guide** in Jellyfin to see them in Live TV.
 
 ## Development
 
 ```bash
 npm install
+cp .env.example .env  # then edit with your Jellyfin URL + API key
 npm run dev
 ```
 
-This starts both the Express API server (port 3000) and the Vite dev server (port 5173) with hot reload. The Vite dev server proxies `/api` and `/iptv` requests to Express.
+This starts both the Express API server (port 3000) and the Vite dev server (port 5173) with hot reload. The Vite dev server proxies `/api` and `/iptv` requests to Express. Open `http://localhost:5173` for the UI.
+
+In dev mode `version.json` isn't generated, so `/health` reports `version: "unknown"` — that's expected.
 
 ## API Endpoints
+
+### System
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | `{status, version, builtAt}` — used by Docker HEALTHCHECK and bug reports |
+| `GET /health/detailed` | Channel counts, schedule cache age, stream stats, Jellyfin reachability |
+| `GET /iptv/debug/ffmpeg` | FFmpeg version and codec capabilities (debug) |
 
 ### IPTV
 
@@ -141,7 +189,7 @@ This starts both the Express API server (port 3000) and the Vite dev server (por
 | `GET /iptv/stream/:channelId` | Live MPEG-TS stream proxy (used by Jellyfin's IPTV tuner) |
 | `GET /iptv/hls/:channelId/stream.m3u8` | HLS playlist for direct iOS/Swiftfin/web playback |
 | `GET /iptv/hls/:channelId/:segment` | Individual HLS `.ts` segment |
-| `GET /iptv/schedule/:channelId` | Full schedule for a channel |
+| `GET /iptv/schedule/:channelId` | Full 48h schedule for a channel |
 | `POST /iptv/schedule/preview` | Generate a schedule for an unsaved channel shape (used by the editor's live preview) |
 | `GET /iptv/now/:channelId` | What's currently playing |
 
@@ -150,9 +198,11 @@ This starts both the Express API server (port 3000) and the Vite dev server (por
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/channels` | List all channels |
+| `GET /api/channels/:id` | Get a single channel |
 | `POST /api/channels` | Create a channel |
 | `PUT /api/channels/:id` | Update a channel |
 | `DELETE /api/channels/:id` | Delete a channel |
+| `POST /api/channels/preview` | Count matching Jellyfin items for a filter (used by QuickCreate) |
 
 ### Jellyfin
 
@@ -161,19 +211,30 @@ This starts both the Express API server (port 3000) and the Vite dev server (por
 | `GET /api/jellyfin/status` | Connection status |
 | `GET /api/jellyfin/libraries` | List libraries |
 | `GET /api/jellyfin/genres` | List all genres |
+| `GET /api/jellyfin/tags` | List all tags |
 | `GET /api/jellyfin/items` | Query items |
 
 ## Environment Variables
+
+### Runtime
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `JELLYFIN_URL` | Yes | — | Your Jellyfin server URL |
 | `JELLYFIN_API_KEY` | Yes | — | Jellyfin API key |
+| `BASE_URL` | Yes (production) | Auto-detected from request | External URL clients use to reach this app — gets baked into M3U stream URLs. If malformed (no `scheme://host`), the server logs a warning at startup and ignores it. Auto-detection only works for direct LAN access; behind a reverse proxy it will produce wrong URLs |
 | `PORT` | No | `3000` | Server port |
-| `BASE_URL` | Recommended | Auto-detected from request | External URL for stream links in the M3U. Auto-detection works for direct LAN access but breaks behind a reverse proxy — set it explicitly in production |
-| `DB_PATH` | No | `./data/virtual-tv.db` | SQLite database path |
+| `DB_PATH` | No | `./data/virtual-tv.db` | SQLite database path. The Docker image volumes `/app/data` so channels persist across redeploys |
 | `SCHEDULE_TZ` | No | `America/Los_Angeles` | IANA timezone that controls schedule day boundaries |
+| `CORS_ORIGIN` | No | `*` | Comma-separated allowed origins. Restrict in production if exposing the UI publicly |
 | `NODE_ENV` | No | — | Set to `production` for static file serving |
+| `SOURCE_COMMIT` | No | — | Read at startup as the version reported by `/health`. Coolify sets this automatically |
+
+### Build-time (Docker)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GIT_SHA` | `unknown` | Baked into `/app/version.json` and reported by `/health`. Pass via `--build-arg GIT_SHA=$(git rev-parse --short HEAD)`. Coolify users can skip this — `SOURCE_COMMIT` covers it at runtime |
 
 ## How It Works
 
@@ -192,22 +253,37 @@ This starts both the Express API server (port 3000) and the Vite dev server (por
 ```
 src/
   server/
-    index.ts              # Express entry point
-    db.ts                 # SQLite database
+    index.ts              # Express entry point + /health endpoints
+    db.ts                 # SQLite database (channels table)
     schedule.ts           # 48h schedule engine (pure function of wall-clock time)
-    jellyfin-client.ts    # Jellyfin API client
+    jellyfin-client.ts    # Jellyfin API client (items, MediaSources, audio language resolution)
+    runtime-stats.ts      # Stream/error counters surfaced via /health/detailed
     routes/
-      iptv.ts             # M3U, XMLTV, streaming
-      channels.ts         # Channel CRUD
-      jellyfin.ts         # Jellyfin proxy
+      iptv.ts             # M3U, XMLTV, MPEG-TS + HLS streaming, schedule preview
+      channels.ts         # Channel CRUD + filter preview
+      jellyfin.ts         # Status, libraries, genres, tags, items proxy
   client/
-    App.tsx               # React UI
-    main.tsx              # Entry point
+    App.tsx               # React UI: channel list, editor, QuickCreate, schedule preview
+    main.tsx              # React entry point
   shared/
-    types.ts              # Shared TypeScript types
+    types.ts              # Channel, ChannelFilter, ScheduleSlot, JellyfinItem
 ```
 
 ## Troubleshooting
+
+> When in doubt, start with `curl http://your-host:3336/health/detailed`. It tells you in one shot whether channels exist, whether their schedules generated, whether Jellyfin is reachable, and what version is running.
+
+### Empty Live TV / 0 channels in Jellyfin
+
+Symptom: `/iptv/channels.m3u` returns content but Jellyfin's Live TV → Channels list is empty after Refresh Channels.
+
+The most common cause is a misconfigured `BASE_URL`. Check what the M3U actually serves:
+
+```bash
+curl http://your-host:3336/iptv/channels.m3u | head
+```
+
+If the URL after each `#EXTINF` line doesn't start with `http://your-host:3336/...`, your `BASE_URL` env var isn't a real URL. Builds from `c159e6b` onwards log a `WARNING: BASE_URL is not a valid URL …` line at startup when this happens — check `docker logs <container>` for it. Set `BASE_URL` explicitly in your env (or Coolify's Environment Variables UI) to fix.
 
 ### Stale EPG / Guide shows wrong content
 
@@ -215,17 +291,20 @@ Jellyfin caches EPG data aggressively. After updating channels or changing sched
 
 **Method 1: API refresh (try first)**
 
-Trigger the "Refresh Guide" scheduled task via the Jellyfin API:
+Trigger both scheduled tasks in order — Refresh Channels first, then Refresh Guide:
 
 ```bash
-curl -X POST "http://your-jellyfin:8096/ScheduledTasks/Running/TASK_ID" \
-  -H 'Authorization: MediaBrowser Token="YOUR_API_KEY"'
-```
+JELLYFIN=http://your-jellyfin:8096
+KEY=your-api-key
 
-To find the task ID:
-```bash
-curl "http://your-jellyfin:8096/ScheduledTasks" \
-  -H 'Authorization: MediaBrowser Token="YOUR_API_KEY"' | grep -i "refresh guide"
+# Find task IDs
+curl -s "$JELLYFIN/ScheduledTasks" -H "Authorization: MediaBrowser Token=\"$KEY\"" \
+  | python3 -c "import sys,json; [print(t['Id'], t['Name']) for t in json.load(sys.stdin) if 'channel' in t['Name'].lower() or 'guide' in t['Name'].lower()]"
+
+# Trigger them (substitute the IDs you found above)
+curl -X POST "$JELLYFIN/ScheduledTasks/Running/<refresh-channels-id>" -H "Authorization: MediaBrowser Token=\"$KEY\""
+# wait for it to complete (poll /ScheduledTasks/<id> until State == Idle)
+curl -X POST "$JELLYFIN/ScheduledTasks/Running/<refresh-guide-id>" -H "Authorization: MediaBrowser Token=\"$KEY\""
 ```
 
 **Method 2: Delete cached EPG files**
@@ -240,7 +319,7 @@ If the API refresh isn't enough, clear the cache files directly:
    rm -rf <jellyfin-config>/cache/channels/*
    ```
 3. Start Jellyfin
-4. Run "Refresh Guide" from Dashboard > Scheduled Tasks
+4. Run **Refresh Channels** then **Refresh Guide** from Dashboard → Scheduled Tasks
 
 ### EPG and stream showing different content
 
