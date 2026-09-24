@@ -1,54 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import type { Channel, ChannelFilter, JellyfinLibrary, ScheduleSlot } from "../shared/types";
-
-// ── Neo-Brutalism Dark ──────────────────────────────────────────
-
-const c = {
-  bg: "#141414",
-  surface: "#1e1e1e",
-  surfaceAlt: "#252525",
-  accent: "#FF6B6B",
-  yellow: "#FFD93D",
-  text: "#f0f0f0",
-  textDim: "#888888",
-  border: "#e8e8e8",
-  black: "#000000",
-  danger: "#FF4444",
-  success: "#00FF00",
-};
-
-const font = "Space Grotesk, sans-serif";
-
-// ── Styles ───────────────────────────────────────────────────────
-
-const inputStyle: React.CSSProperties = {
-  background: c.bg,
-  color: c.text,
-  border: `3px solid ${c.border}`,
-  borderRadius: 0,
-  padding: "8px 12px",
-  fontSize: 14,
-  fontFamily: font,
-  fontWeight: 700,
-  outline: "none",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
-const buttonStyle: React.CSSProperties = {
-  background: c.yellow,
-  border: `3px solid ${c.border}`,
-  borderRadius: 0,
-  padding: "8px 16px",
-  cursor: "pointer",
-  color: c.black,
-  fontWeight: 800,
-  fontFamily: font,
-  fontSize: 13,
-  textTransform: "uppercase",
-  boxShadow: `3px 3px 0px 0px ${c.border}`,
-  transition: "transform 0.1s, box-shadow 0.1s",
-};
+import type { Channel, ChannelFilter, JellyfinLibrary } from "../shared/types";
+import { c, font, inputStyle, buttonStyle, componentCss } from "./theme";
+import { NowPlaying } from "./components/NowPlaying";
+import { ScheduleGuide } from "./components/ScheduleGuide";
 
 // ── Keyword Parser ──────────────────────────────────────────────
 
@@ -139,29 +93,6 @@ function parseKeywords(
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function formatDuration(ticks: number): string {
-  const mins = Math.round(ticks / 10_000_000 / 60);
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-function formatDateHeader(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === tomorrow.toDateString()) return "Tomorrow";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-}
-
 function useIsMobile(breakpoint = 768) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
   useEffect(() => {
@@ -197,53 +128,35 @@ export default function App() {
     if (!document.getElementById("neon-keyframes")) {
       const style = document.createElement("style");
       style.id = "neon-keyframes";
-      style.textContent = `
-        @keyframes neonFlicker {
-          0%, 100% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
-          18% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
-          20% { text-shadow: none; opacity: 0.6; }
-          22% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
-          55% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
-          57% { text-shadow: none; opacity: 0.5; }
-          58% { text-shadow: 0 0 2px #FFD93D, 0 0 6px #FFD93D; opacity: 0.8; }
-          60% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
-        }
-        @keyframes neonPulse {
-          0%, 100% { text-shadow: 0 0 4px #FF6B6B, 0 0 10px #FF6B6B, 0 0 20px #FF6B6B, 0 0 40px #FF6B6B; }
-          50% { text-shadow: 0 0 2px #FF6B6B, 0 0 5px #FF6B6B, 0 0 10px #FF6B6B; }
-        }
-        @keyframes vtFadeIn {
-          from { opacity: 0; transform: translateY(4px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes vtPulseDot {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.35; }
-        }
-        @keyframes vtShimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
-        .vt-fadein { animation: vtFadeIn 0.22s ease-out both; }
-        .vt-skeleton-bar {
-          background: linear-gradient(90deg, #252525 0%, #333 50%, #252525 100%);
-          background-size: 200% 100%;
-          animation: vtShimmer 1.4s linear infinite;
-        }
-        body { scrollbar-color: #3a3a3a #141414; scrollbar-width: thin; }
-        ::-webkit-scrollbar { width: 10px; height: 10px; }
-        ::-webkit-scrollbar-track { background: #141414; }
-        ::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #141414; }
-        ::-webkit-scrollbar-thumb:hover { background: #555; }
-        button { transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s, color 0.15s; }
-        button:not(:disabled) { cursor: pointer; }
-        button:not(:disabled):active { transform: translate(2px, 2px); }
-        button:disabled { cursor: not-allowed; }
-        input, select, textarea { transition: border-color 0.12s ease, background 0.15s; }
-        input:focus, select:focus, textarea:focus { border-color: #FFD93D !important; }
-        .vt-row { transition: background 0.12s ease, border-color 0.12s ease; }
-        .vt-row:hover { background: #1a1a1a !important; }
-      `;
+      style.textContent = `${componentCss}
+@keyframes neonFlicker {
+  0%, 100% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+  18% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+  20% { text-shadow: none; opacity: 0.6; }
+  22% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+  55% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+  57% { text-shadow: none; opacity: 0.5; }
+  58% { text-shadow: 0 0 2px #FFD93D, 0 0 6px #FFD93D; opacity: 0.8; }
+  60% { text-shadow: 0 0 4px #FFD93D, 0 0 11px #FFD93D, 0 0 19px #FFD93D, 0 0 40px #FF6B6B, 0 0 80px #FF6B6B; opacity: 1; }
+}
+@keyframes neonPulse {
+  0%, 100% { text-shadow: 0 0 4px #FF6B6B, 0 0 10px #FF6B6B, 0 0 20px #FF6B6B, 0 0 40px #FF6B6B; }
+  50% { text-shadow: 0 0 2px #FF6B6B, 0 0 5px #FF6B6B, 0 0 10px #FF6B6B; }
+}
+body { scrollbar-color: #3a3a3a #141414; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #141414; }
+::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #141414; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+button { transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s, color 0.15s; }
+button:not(:disabled) { cursor: pointer; }
+button:not(:disabled):active { transform: translate(2px, 2px); }
+button:disabled { cursor: not-allowed; }
+input, select, textarea { transition: border-color 0.12s ease, background 0.15s; }
+input:focus, select:focus, textarea:focus { border-color: #FFD93D !important; }
+.vt-row { transition: background 0.12s ease, border-color 0.12s ease; }
+.vt-row:hover { background: #1a1a1a !important; }
+`;
       document.head.appendChild(style);
     }
   }, []);
@@ -591,300 +504,6 @@ function formatParsedFilters(f: ChannelFilter): string {
   if (f.itemTypes?.length) parts.push(f.itemTypes.map((t) => t === "Movie" ? "Movies" : "Shows").join(", "));
   if (f.titleMatch) parts.push(`"${f.titleMatch}"`);
   return parts.join(" · ");
-}
-
-// ── Now Playing ────────────────────────────────────────────────
-
-function NowPlaying({ channelId }: { channelId: string }) {
-  const [nowData, setNowData] = useState<{
-    channel: string;
-    nowPlaying: string | null;
-    offsetSeconds?: number;
-    startTime?: string;
-    endTime?: string;
-  } | null>(null);
-  const [, setTick] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    let endTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const load = async () => {
-      try {
-        const r = await fetch(`/iptv/now/${channelId}`);
-        const d = await r.json();
-        if (cancelled) return;
-        setNowData(d);
-        // Refetch right after the current slot ends so we roll over to the next program
-        if (endTimer) clearTimeout(endTimer);
-        if (d?.endTime) {
-          const remaining = new Date(d.endTime).getTime() - Date.now();
-          if (remaining > 0 && remaining < 60 * 60 * 1000) {
-            endTimer = setTimeout(load, remaining + 800);
-          }
-        }
-      } catch {
-        if (!cancelled) setNowData(null);
-      }
-    };
-
-    load();
-    const pollId = setInterval(load, 30_000);
-    return () => { cancelled = true; clearInterval(pollId); if (endTimer) clearTimeout(endTimer); };
-  }, [channelId]);
-
-  // Tick once per second so the progress bar and "m elapsed / m remaining" stay live
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => (t + 1) % 1_000_000), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (!nowData || !nowData.nowPlaying) {
-    return (
-      <div className="vt-fadein" style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.border}40`, fontSize: 13, color: c.textDim, fontWeight: 700 }}>
-        Nothing currently playing
-      </div>
-    );
-  }
-
-  const startMs = nowData.startTime ? new Date(nowData.startTime).getTime() : 0;
-  const endMs = nowData.endTime ? new Date(nowData.endTime).getTime() : 0;
-  const total = Math.max(0, (endMs - startMs) / 1000);
-  const elapsed = startMs ? Math.max(0, Math.min(total, (Date.now() - startMs) / 1000)) : 0;
-  const progress = total > 0 ? Math.min((elapsed / total) * 100, 100) : 0;
-
-  return (
-    <div className="vt-fadein" style={{ padding: 16, background: c.surfaceAlt, border: `2px solid ${c.accent}60` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{
-          display: "inline-flex", alignItems: "center", gap: 6,
-          background: c.danger, color: c.black, fontSize: 10, fontWeight: 800,
-          padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.1em",
-        }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: "50%", background: c.black,
-            animation: "vtPulseDot 1.2s ease-in-out infinite",
-          }} />
-          LIVE
-        </span>
-        <span style={{ fontSize: 16, fontWeight: 800 }}>{nowData.nowPlaying}</span>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: c.textDim, fontWeight: 700 }}>
-        <span>{formatTime(nowData.startTime!)}</span>
-        <div style={{ flex: 1, height: 4, background: c.bg, position: "relative" }}>
-          <div style={{ width: `${progress}%`, height: "100%", background: c.accent, transition: "width 1s linear" }} />
-        </div>
-        <span>{formatTime(nowData.endTime!)}</span>
-      </div>
-      <div style={{ fontSize: 11, color: c.textDim, marginTop: 6, fontWeight: 700 }}>
-        {Math.floor(elapsed / 60)}m elapsed / {Math.max(0, Math.floor((total - elapsed) / 60))}m remaining
-      </div>
-    </div>
-  );
-}
-
-// ── Schedule Guide ─────────────────────────────────────────────
-
-function ScheduleSkeleton({ compact }: { compact?: boolean }) {
-  const rowH = compact ? 28 : 36;
-  const rows = compact ? 5 : 7;
-  return (
-    <div className="vt-fadein" style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 6 }}>
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} style={{
-          display: "flex", gap: compact ? 8 : 12, alignItems: "center",
-          paddingLeft: 8, opacity: 0.6 - i * 0.04,
-        }}>
-          <div className="vt-skeleton-bar" style={{ width: compact ? 48 : 64, height: rowH, border: `2px solid ${c.border}20` }} />
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-            <div className="vt-skeleton-bar" style={{ height: 10, width: `${60 + (i * 7) % 35}%` }} />
-            <div className="vt-skeleton-bar" style={{ height: 8, width: "40%", opacity: 0.7 }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScheduleGuide({ channelId, maxSlots, compact, previewChannel }: {
-  channelId: string;
-  maxSlots?: number;
-  compact?: boolean;
-  previewChannel?: Channel;
-}) {
-  const [slots, setSlots] = useState<ScheduleSlot[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [now, setNow] = useState(() => Date.now());
-  const nowRef = useRef<HTMLDivElement>(null);
-  const scrolledRef = useRef(false);
-
-  // Serialize previewChannel deterministically so the effect re-runs only when
-  // the relevant fields change (not on every parent re-render that builds a
-  // fresh object literal).
-  const previewKey = previewChannel
-    ? JSON.stringify({
-        f: previewChannel.filters,
-        s: previewChannel.shuffleMode,
-        i: previewChannel.id,
-      })
-    : null;
-
-  useEffect(() => {
-    let cancelled = false;
-    const ac = new AbortController();
-    scrolledRef.current = false;
-    setLoading(true);
-
-    const load = async () => {
-      try {
-        let data: { slots?: ScheduleSlot[] };
-        if (previewChannel) {
-          const r = await fetch("/iptv/schedule/preview", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: previewChannel }),
-            signal: ac.signal,
-          });
-          data = await r.json();
-        } else {
-          const r = await fetch(`/iptv/schedule/${channelId}`, { signal: ac.signal });
-          data = await r.json();
-        }
-        if (cancelled) return;
-        setSlots(data.slots || []);
-        setLoading(false);
-      } catch (err) {
-        if ((err as { name?: string })?.name === "AbortError") return;
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    // Debounce in preview mode so rapid genre toggles don't spam Jellyfin.
-    let kickoff: ReturnType<typeof setTimeout> | null = null;
-    if (previewChannel) {
-      kickoff = setTimeout(load, 400);
-    } else {
-      load();
-    }
-    const pollId = previewChannel ? null : setInterval(load, 60_000);
-    return () => {
-      cancelled = true;
-      ac.abort();
-      if (kickoff) clearTimeout(kickoff);
-      if (pollId) clearInterval(pollId);
-    };
-  }, [channelId, previewKey]);
-
-  // Refresh the "now" marker every 15s so the NOW highlight tracks wall-clock time
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Auto-scroll to "now playing" within the schedule's scroll container (not the page).
-  // Only scroll once per channel load — subsequent poll refreshes must not re-scroll.
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (loading || scrolledRef.current || !nowRef.current) return;
-    const item = nowRef.current;
-    const container = scrollContainerRef.current;
-    if (container) {
-      const scroller = container.scrollHeight > container.clientHeight
-        ? container
-        : container.closest<HTMLElement>("[data-scroll-container]") || container.parentElement;
-      if (scroller) {
-        const itemRect = item.getBoundingClientRect();
-        const scrollerRect = scroller.getBoundingClientRect();
-        scroller.scrollTop += itemRect.top - scrollerRect.top;
-        scrolledRef.current = true;
-      }
-    }
-  }, [loading, slots]);
-
-  if (loading) {
-    return <ScheduleSkeleton compact={compact} />;
-  }
-
-  if (slots.length === 0) {
-    return <div style={{ color: c.textDim, fontSize: 13, fontWeight: 700, padding: 16 }}>No content scheduled</div>;
-  }
-
-  const displaySlots = maxSlots ? slots.slice(0, maxSlots) : slots;
-  const imgSize = compact ? { w: 48, h: 28 } : { w: 64, h: 36 };
-
-  // Group by date
-  const groups: { date: string; slots: ScheduleSlot[] }[] = [];
-  for (const slot of displaySlots) {
-    const dateKey = new Date(slot.startTime).toDateString();
-    const last = groups[groups.length - 1];
-    if (last && last.date === dateKey) {
-      last.slots.push(slot);
-    } else {
-      groups.push({ date: dateKey, slots: [slot] });
-    }
-  }
-
-  return (
-    <div ref={scrollContainerRef} className="vt-fadein" style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: compact ? undefined : 600, overflowY: compact ? undefined : "auto", position: "relative" }}>
-      {groups.map((group) => (
-        <div key={group.date}>
-          <div style={{
-            fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.15em",
-            color: c.yellow, padding: "10px 0 6px", borderBottom: `1px solid ${c.border}20`,
-          }}>
-            {formatDateHeader(group.slots[0].startTime)}
-          </div>
-          {group.slots.map((slot, i) => {
-            const isCurrent = now >= new Date(slot.startTime).getTime() && now < new Date(slot.endTime).getTime();
-            const isPast = new Date(slot.endTime).getTime() < now;
-            return (
-              <div
-                key={`${slot.itemId}-${i}`}
-                ref={isCurrent ? nowRef : undefined}
-                style={{
-                  display: "flex", gap: compact ? 8 : 12, padding: compact ? "6px 0" : "8px 0",
-                  borderBottom: `1px solid ${c.border}10`,
-                  opacity: isPast ? 0.35 : 1,
-                  background: isCurrent ? `${c.accent}08` : "transparent",
-                  borderLeft: isCurrent ? `3px solid ${c.accent}` : "3px solid transparent",
-                  paddingLeft: 8,
-                  transition: "opacity 0.2s",
-                }}
-              >
-                {slot.imageUrl && (
-                  <img
-                    src={slot.imageUrl}
-                    alt=""
-                    style={{
-                      width: imgSize.w, height: imgSize.h, objectFit: "cover",
-                      border: `2px solid ${isCurrent ? c.accent : c.border}40`, flexShrink: 0,
-                    }}
-                  />
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    {isCurrent && (
-                      <span style={{
-                        background: c.accent, color: c.black, fontSize: 9, fontWeight: 800,
-                        padding: "1px 5px", textTransform: "uppercase", flexShrink: 0,
-                      }}>NOW</span>
-                    )}
-                    <span style={{
-                      fontSize: compact ? 12 : 13, fontWeight: 700,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>{slot.title}</span>
-                  </div>
-                  <div style={{ fontSize: compact ? 10 : 11, color: c.textDim, fontWeight: 700, marginTop: 2 }}>
-                    {formatTime(slot.startTime)} - {formatTime(slot.endTime)} · {formatDuration(slot.durationTicks)}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
 }
 
 // ── Channel Detail ──────────────────────────────────────────────
