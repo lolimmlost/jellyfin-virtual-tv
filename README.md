@@ -242,7 +242,7 @@ In dev mode `version.json` isn't generated, so `/health` reports `version: "unkn
 2. The **schedule engine** is a pure function of `(channel, wall-clock time)` — it deterministically locates the slot containing "now" against a fixed anchor, so EPG and stream always agree, and restarts/redeploys never desync the schedule
 3. The **M3U endpoint** lists channels for Jellyfin's IPTV tuner
 4. The **XMLTV endpoint** provides the full programme guide with titles and thumbnails
-5. When a client tunes in, the **stream proxy** builds a 3-episode concat batch capped at the wall-clock end of the last slot. ffmpeg pulls each item from Jellyfin (with `AudioStreamIndex` resolved to the channel's preferred language), re-encodes to fixed H.264 high@4.1 + AAC LC stereo, and applies a per-channel `-output_ts_offset` so PTS keeps climbing across batch restarts and reconnects don't rewind the player
+5. When a client tunes in, the **stream proxy** builds a 3-episode concat batch capped at the wall-clock end of the last slot. ffmpeg pulls each item from Jellyfin (with `AudioStreamIndex` resolved to the channel's preferred language), re-encodes to fixed H.264 high@4.1 + AAC LC stereo, and applies a per-channel `-output_ts_offset` so PTS keeps climbing across batch restarts and reconnects don't rewind the player. The next batch resumes from where the output actually stopped (not wall-clock "now"), so an early-ending batch never replays the episode just shown
 
 ### Why re-encode at every batch boundary?
 
