@@ -2,7 +2,8 @@
 # End-to-end check of /iptv/stream against dev/mock-jellyfin.mjs.
 # Usage: dev/e2e-stream.sh [seconds=75]
 # Expect: batches advance Office -> Parks -> Office with no replays, and
-# roughly (seconds + 90) seconds of video delivered (90s tune-in burst).
+# roughly (seconds + 90) seconds of video delivered (90s tune-in burst), and
+# video PTS that never steps backwards across batch boundaries.
 set -u
 SECS=${1:-75}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,3 +25,6 @@ echo "== upstream requests =="; cat "$W/mock.log"
 echo "== delivered (25fps test clips) =="
 N=$(ffprobe -v error -select_streams v -count_packets -show_entries stream=nb_read_packets -of csv=p=0 "$W/out.ts" | grep -Eo "[0-9]+" | sort -n | tail -1)
 echo "$N" | awk '{printf "%.0fs of video in '"$SECS"'s\n",$1/25}'
+echo "== video PTS continuity (expect no backward jumps) =="
+ffprobe -v error -select_streams v -show_entries packet=pts_time -of csv=p=0 "$W/out.ts" | grep -E "^[0-9]" \
+  | awk -F, '{t=$1+0; if (NR>1 && t<p-1) {printf "BACKWARD JUMP at pkt %d: %.2f -> %.2f\n",NR,p,t; b++} if (NR>1 && t>p+2) printf "gap at pkt %d: %.2f -> %.2f\n",NR,p,t; p=t} END {printf "%s (%d packets, last pts %.2f)\n", b?"FAIL":"OK", NR, p}'

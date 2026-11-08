@@ -3,6 +3,7 @@ import { spawn, execSync, type ChildProcess } from "child_process";
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync, existsSync, readdirSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { randomUUID } from "crypto";
 import { getAllChannels, getSchedule, generateSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
 import { getAudioStreamIndex } from "../jellyfin-client.js";
 import { trackStreamStart, trackStreamEnd, trackError } from "../runtime-stats.js";
@@ -36,15 +37,17 @@ const HLS_LIST_SIZE = 0; // 0 = keep all segments in playlist (event mode)
 // reconnects, instead of resetting to 0 each time. Without this, every
 // reconnect makes the player jump to t=0.
 const channelPtsBase = new Map<string, number>();
+// Wrap every 12h to stay well inside mpegts' 33-bit PTS budget (~26.5h @ 90kHz).
+const PTS_WRAP_SEC = 12 * 3600;
+const PTS_BATCH_GAP_SEC = 1;
 function getPtsOffsetSeconds(channelId: string): number {
   let base = channelPtsBase.get(channelId);
   if (base === undefined) {
     base = Date.now();
     channelPtsBase.set(channelId, base);
   }
-  // Wrap every 12h to stay well inside mpegts' 33-bit PTS budget (~26.5h @ 90kHz).
   const elapsedSec = (Date.now() - base) / 1000;
-  return elapsedSec % (12 * 3600);
+  return elapsedSec % PTS_WRAP_SEC;
 }
 
 // Re-encode every concat boundary to libx264/aac with fixed parameters.
@@ -192,7 +195,11 @@ async function writeConcatFile(
   let concatContent = "";
   for (let i = 0; i < plan.slots.length; i++) {
     const bSlot = plan.slots[i];
-    const params = new URLSearchParams({ api_key: opts.apiKey });
+    // Jellyfin keys transcode jobs on media + device + PlaySessionId, not on
+    // StartTimeTicks. Without a unique session, a second request for an
+    // episode already being transcoded is served the existing job from its
+    // original start point — the tune lands minutes behind the EPG.
+    const params = new URLSearchParams({ api_key: opts.apiKey, PlaySessionId: randomUUID() });
     if (opts.staticStream) {
       // Passthrough: serve original file, let ffmpeg remux to mpegts
       params.set("Static", "true");
@@ -644,6 +651,11 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   const streamLoop = async () => {
     let cursorMs = Date.now();
     const failState = { failedStarts: 0 };
+    // PTS for this connection's next batch. Seeded from the channel clock so
+    // reconnects keep climbing, then advanced by what each batch actually
+    // emitted — the pipe runs up to STREAM_MAX_LEAD_MS ahead of the wall
+    // clock, so re-reading the clock per batch would jump PTS backwards.
+    let ptsOffset = getPtsOffsetSeconds(channel.id);
 
     while (!closed && !res.writableEnded) {
       const plan = await planBatch(channel, cursorMs);
@@ -666,7 +678,6 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
       // accumulate across episodes.
       const batchDurationSec = batchCapSeconds(plan);
       const titles = plan.slots.map((s) => s.title).join(" → ");
-      const ptsOffset = getPtsOffsetSeconds(channel.id);
       const leadSec = Math.round((plan.contentStartMs - Date.now()) / 1000);
       console.log(`[stream] ${channel.name}: batch of ${plan.slots.length} — ${titles} (offset ${plan.offsetSeconds}s, cap ${batchDurationSec}s, lead ${leadSec}s, pts +${Math.round(ptsOffset)}s)`);
 
@@ -770,6 +781,12 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
       // Resume from where the output actually stopped, not from wall-clock
       // "now" — otherwise an early exit replays the episode we just showed.
       cursorMs = advanceCursor(channel, plan, progress.seconds, failState, "stream");
+      // Continue PTS just past this batch's last frame. ffmpeg's stats can lag
+      // the final packet by up to ~0.5s on an abnormal exit, so leave a small
+      // forward gap — a gap is harmless, an overlap stalls players.
+      if (progress.seconds > 0) {
+        ptsOffset = (ptsOffset + progress.seconds + PTS_BATCH_GAP_SEC) % PTS_WRAP_SEC;
+      }
       if (exitCode !== 0 && !closed) await sleep(2000);
     }
 
