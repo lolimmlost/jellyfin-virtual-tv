@@ -50,6 +50,21 @@ function getPtsOffsetSeconds(channelId: string): number {
   return elapsedSec % PTS_WRAP_SEC;
 }
 
+// Stop a piped ffmpeg for a client that went away. SIGTERM alone isn't
+// enough: if the client stopped reading first, we've paused stdout and ffmpeg
+// is blocked in write() on a full pipe — the signal only sets a flag and the
+// write restarts, so it never exits. Dropping the pipe fails that write
+// (EPIPE); SIGKILL is the backstop.
+const FFMPEG_KILL_GRACE_MS = 5000;
+function stopFfmpeg(proc: ChildProcess) {
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
+  proc.stdout?.destroy();
+  proc.kill("SIGTERM");
+  const timer = setTimeout(() => proc.kill("SIGKILL"), FFMPEG_KILL_GRACE_MS);
+  timer.unref();
+  proc.once("exit", () => clearTimeout(timer));
+}
+
 // Re-encode every concat boundary to libx264/aac with fixed parameters.
 // Without this, -c copy passes through whatever SPS/PPS/profile/resolution
 // each Jellyfin transcode produced, and consecutive episodes can have
@@ -731,14 +746,14 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         };
         const pacer = setInterval(updateFlow, 500);
 
-        const onClose = () => {
-          ffmpeg.kill("SIGTERM");
-        };
+        const onClose = () => stopFfmpeg(ffmpeg);
         req.on("close", onClose);
+        // The client may have left while this batch was being planned.
+        if (closed) onClose();
 
         ffmpeg.stdout.on("data", (chunk: Buffer) => {
           if (res.writableEnded || closed) {
-            ffmpeg.kill("SIGTERM");
+            stopFfmpeg(ffmpeg);
             return;
           }
           if (!res.write(chunk) && !resBlocked) {
