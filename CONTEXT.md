@@ -146,6 +146,9 @@ jellyfin-virtual-tv/
 8. **EPG silently empty after deploy** — Jellyfin's "Refresh Guide" task only populates programmes for channels it already knows about. Refresh Channels (which discovers them via M3U) must run first. Out of order = blank guide.
 9. **PTS resets at every batch** — without `-output_ts_offset`, each new ffmpeg invocation starts PTS at 0, and the player rewinds on every reconnect. Fix: maintain a per-channel base time, derive offset from `(now - base) mod 12h` (12h wrap stays inside mpegts' 33-bit budget).
 10. **Episode replays instead of advancing** — ffmpeg pulls from Jellyfin ~5× faster than real time, and the next batch was planned from wall-clock *now*. When a batch ended early (most visibly when the next file failed to open at a show boundary — ffmpeg can even exit 0 in that case), the clock was still inside the previous slot, so the loop replayed it. Fix: resume from a content cursor (how much was actually emitted), pace the TS pipe to real time, and skip a slot after 2 failed starts.
+11. **PTS jumped backwards at batch handovers** — the per-channel offset was re-read from the wall clock for every batch, but the paced TS pipe runs up to 90s *ahead* of the clock, so each new batch started ~lead seconds before the previous one ended (players stall or drop frames). Fix: each connection seeds PTS from the channel clock once, then advances it by what each batch emitted (+1s gap).
+12. **Tunes landed minutes behind the guide** — Jellyfin keys transcode jobs on media + device + `PlaySessionId`, not `StartTimeTicks`. Without a session id, a second request for an episode already being transcoded was served the first job from its original start. Fix: unique `PlaySessionId` per upstream request. (Separately, Jellyfin's *Allow stream sharing* on the M3U tuner replays one buffered copy for every tune — turn it off.)
+13. **ffmpeg leaked on disconnect** — a player with a full buffer stops reading, we pause ffmpeg's stdout, ffmpeg blocks in `write()`. SIGTERM only sets a flag and the write restarts, so it never exits. Fix: destroy the stdout pipe (EPIPE), then SIGTERM, SIGKILL after 5s.
 
 ### Key Dev Patterns
 - **Two servers in dev:** Vite (5173, HMR) + Express (3000, API). Vite proxy forwards `/api/*` and `/iptv/*` to Express.
@@ -283,5 +286,5 @@ A short history of why the pipeline ended up where it did, since the commit log 
 2. **Single-process episode chaining** — fixed the gaps but accumulated drift; the stream got further behind the EPG with every transition.
 3. **Concat demuxer with `-c copy`** — gapless transitions, no drift, much cheaper. Two failure modes emerged: video stalled at boundaries when SPS/PPS changed, and on Android TV the audio decoder silently dropped when codec_priv changed mid-stream.
 4. **Concat demuxer with full re-encode** (current) — fixed both. Cost: one libx264 `veryfast` encoder per active stream. CPU is fine on the deploy box.
-5. **Per-channel PTS offset** (current) — added because reconnects were rewinding the player to t=0.
+5. **Per-channel PTS offset** (current) — added because reconnects were rewinding the player to t=0. Since 1.0 it's seeded once per connection and carried forward per batch (see gotcha 11).
 6. **HLS endpoint** (current, parallel) — added for direct iOS/Swiftfin/web playback without going through Jellyfin's tuner indirection.

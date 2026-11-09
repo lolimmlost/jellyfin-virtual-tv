@@ -6,7 +6,7 @@ Paste this into a fresh local Claude session (or read it yourself) to pick up wh
 
 **Project:** Jellyfin Virtual TV — sidecar that turns a Jellyfin library into virtual live-TV channels (M3U + XMLTV for Jellyfin's Live TV).
 **Repo:** https://github.com/lolimmlost/jellyfin-virtual-tv
-**Branch:** `claude/gallant-lovelace-v10i7m` (pushed; **not merged, no PR yet**)
+**Branch:** `claude/gallant-lovelace-v10i7m` → PR to `main` for v1.0.0
 **Local path:** `/home/default/Desktop/dev/jellyfin-virtual-tv`
 
 ```bash
@@ -57,14 +57,23 @@ To compare against the old behavior: `git stash` / `git checkout 863e331 -- src/
 
 Regular dev loop: `cp .env.example .env`, point `JELLYFIN_URL` / `JELLYFIN_API_KEY` at your real server, run `npm run dev`, and open http://localhost:5173. Type-check with `npx tsc --noEmit -p .`. There's no unit-test suite.
 
-## Still to do / open questions
+## Status (2026-11-08, v1.0.0)
 
-1. **Verify against real Jellyfin** on the Office + Parks and Rec channel. Watch for one full episode boundary and check the container logs for:
-   - `[stream] … batch of 3 — …` lines with a positive `lead`
-   - any `[stream] ffmpeg exited …` / `skipping to next slot`
+Verified on production (Jellyfin 12.4, image ffmpeg 5.1) on the Office + Parks and Rec channel:
 
-   The ffmpeg stderr in those lines should say **why** Parks and Rec failed to open. That cause hasn't been found yet; the fix only makes the channel recover from it.
-2. **Production ffmpeg version.** The Dockerfile uses Debian bookworm's ffmpeg 5.1, but local testing used 6.1. Confirm that `time=` still excludes `-output_ts_offset` there. Symptom if it doesn't: the cursor jumps far ahead and episodes get skipped. Check with `docker exec <container> ffmpeg -version`, and look at the logs for sane `after Ns of Ms` values.
-3. **Jellyfin tuner with paced input.** Make sure Jellyfin's tuner doesn't time out or stutter now that the TS pipe runs at real time after the 90 s burst. If it does, try raising `STREAM_MAX_LEAD_MS`.
-4. **Not changed: aspect ratio across shows.** ffmpeg auto-scales every later file in a batch to the first file's resolution, so mixing 4:3 and 16:9 shows (or different sizes) can stretch the picture. A possible fix is to add `-vf scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1`. It costs CPU because it upscales SD content.
-5. **PR.** Open a PR from `claude/gallant-lovelace-v10i7m` → `main` once item 1 checks out.
+1. **Batch cursor fix** — every tune and in-batch episode switch matched the EPG to the second; batches advance, no replays.
+2. **Production ffmpeg 5.1** — `time=` still excludes `-output_ts_offset` (cursor values and `after Ns of Ms` were sane).
+3. **Jellyfin tuner with paced input** — no timeouts. The real problems were elsewhere, all fixed for 1.0:
+   - PTS stepped back ~90s at batch handovers (wall-clock PTS vs. a pipe running ahead) → per-connection PTS carry-forward. Verified live: handover at +6904s on the same VLC connection, ≈ previous start + cap + 1s.
+   - Repeat tunes of an episode reused Jellyfin's existing transcode from its old start → unique `PlaySessionId` per upstream request. Verified: each tune gets its own `-ss` transcode.
+   - ffmpeg leaked after a stalled client disconnected → `stopFfmpeg()`. `dev/e2e-stream.sh` now checks this (FAIL on 3f4c424, OK after).
+   - Jellyfin **Allow stream sharing** replayed one buffered copy per tune → turn it off (README).
+
+`dev/e2e-stream.sh` now also reports PTS continuity and leftover ffmpegs; all three checks should print `OK`.
+
+## Still open
+
+1. **Aspect ratio across shows** (unchanged): ffmpeg scales later files in a batch to the first file's size, so mixing 4:3 and 16:9 can stretch. Possible fix: `-vf scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1` (costs CPU upscaling SD).
+2. **Jellyfin iOS app 1.8.0 + server 12.4** won't hold a Live TV stream (client side; stream plays in VLC). Jellyfin web on iOS stops in PiP/background (page suspended → transcode kill timer). Workaround: IPTV player directly.
+3. **Why Parks and Rec failed to open** in the original report was never pinned down; the channel now recovers from it either way.
+4. **Moderate advisories**: `fast-xml-parser` (major upgrade) and `qs` via Express 4.
