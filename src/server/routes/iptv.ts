@@ -53,12 +53,17 @@ function getPtsOffsetSeconds(channelId: string): number {
 // Stop a piped ffmpeg for a client that went away. SIGTERM alone isn't
 // enough: if the client stopped reading first, we've paused stdout and ffmpeg
 // is blocked in write() on a full pipe — the signal only sets a flag and the
-// write restarts, so it never exits. Dropping the pipe fails that write
-// (EPIPE); SIGKILL is the backstop.
+// write restarts, so it never exits. Resuming stdout (callers discard the
+// data once the client is gone) lets that write complete so ffmpeg sees the
+// flag and exits cleanly. Don't destroy the pipe instead: ffmpeg ignores
+// SIGPIPE, and 5.1 segfaults tearing down on EPIPE + SIGTERM (a 300MB+ core
+// dump per disconnect). SIGKILL is the backstop.
 const FFMPEG_KILL_GRACE_MS = 5000;
+const stoppingFfmpeg = new WeakSet<ChildProcess>();
 function stopFfmpeg(proc: ChildProcess) {
-  if (proc.exitCode !== null || proc.signalCode !== null) return;
-  proc.stdout?.destroy();
+  if (proc.exitCode !== null || proc.signalCode !== null || stoppingFfmpeg.has(proc)) return;
+  stoppingFfmpeg.add(proc);
+  proc.stdout?.resume();
   proc.kill("SIGTERM");
   const timer = setTimeout(() => proc.kill("SIGKILL"), FFMPEG_KILL_GRACE_MS);
   timer.unref();
@@ -735,7 +740,8 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         let resBlocked = false;
         const updateFlow = () => {
           const leadMs = plan.contentStartMs + progress.seconds * 1000 - Date.now();
-          const shouldPause = resBlocked || leadMs > STREAM_MAX_LEAD_MS;
+          // Never re-pause an ffmpeg we're stopping — it must drain to exit.
+          const shouldPause = !stoppingFfmpeg.has(ffmpeg) && (resBlocked || leadMs > STREAM_MAX_LEAD_MS);
           if (shouldPause && !paused) {
             ffmpeg.stdout.pause();
             paused = true;

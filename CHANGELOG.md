@@ -30,8 +30,8 @@ served as an M3U tuner + XMLTV guide for Jellyfin Live TV or any IPTV player.
   a play session regardless of start time. Every upstream request now sends a
   unique `PlaySessionId`.
 - **ffmpeg processes leaked** when a player stopped reading (full buffer) and
-  then disconnected; each one stayed blocked forever. Disconnects now close the
-  pipe, signal, and SIGKILL as a backstop.
+  then disconnected; each one stayed blocked forever. Disconnects now drain the
+  pipe so ffmpeg can exit cleanly on SIGTERM, with SIGKILL as a backstop.
 - Runtime dependency advisories (express → body-parser / proxy-addr / qs)
   updated to patched versions.
 
