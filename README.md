@@ -235,6 +235,7 @@ In dev mode `version.json` isn't generated, so `/health` reports `version: "unkn
 | `JELLYFIN_API_KEY` | Yes | — | Jellyfin API key |
 | `BASE_URL` | Yes (production) | Auto-detected from request | External URL clients use to reach this app — gets baked into M3U stream URLs. If malformed (no `scheme://host`), the server logs a warning at startup and ignores it. Auto-detection only works for direct LAN access; behind a reverse proxy it will produce wrong URLs |
 | `PORT` | No | `3000` | Server port |
+| `CHANNEL_ITEM_LIMIT` | No | `5000` | Max items per channel pool (random shuffle draws from this pool) |
 | `DB_PATH` | No | `./data/virtual-tv.db` | SQLite database path. The Docker image volumes `/app/data` so channels persist across redeploys |
 | `SCHEDULE_TZ` | No | `America/Los_Angeles` | IANA timezone that controls schedule day boundaries |
 | `CORS_ORIGIN` | No | `*` | Comma-separated allowed origins. Restrict in production if exposing the UI publicly |

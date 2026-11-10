@@ -8,6 +8,10 @@ const authHeaders = {
 };
 
 const FETCH_TIMEOUT_MS = 15_000;
+// Max items pulled per channel. Items are sorted by name and truncated BEFORE the
+// shuffle, so this is the size of the pool a "random" channel draws from. Keep it
+// well above the library size or the shuffle only reorders the first N titles.
+const DEFAULT_ITEM_LIMIT = Math.max(1, Number(process.env.CHANNEL_ITEM_LIMIT) || 5000);
 
 // Resolve the global stream index for an item's audio track in the requested
 // language. Jellyfin's AudioStreamIndex param is the index into
@@ -62,7 +66,7 @@ export async function getAudioStreamIndex(itemId: string, language: string): Pro
   }
 }
 
-export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): Promise<JellyfinItem[]> {
+export async function fetchItemsForFilter(filter: ChannelFilter, limit = DEFAULT_ITEM_LIMIT): Promise<JellyfinItem[]> {
   if (!JELLYFIN_URL || !JELLYFIN_API_KEY) return [];
 
   // If titleMatch is set, find matching series/movies first, then get their episodes
@@ -157,7 +161,7 @@ async function fetchByTag(filter: ChannelFilter, limit: number): Promise<Jellyfi
     seriesParams.set("includeItemTypes", "Series");
     seriesParams.set("tags", tags);
     seriesParams.set("fields", "Genres,Tags");
-    seriesParams.set("limit", "200");
+    seriesParams.set("limit", String(limit));
 
     if (filter.genres?.length) {
       seriesParams.set("genres", filter.genres.join("|"));
@@ -206,7 +210,7 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       seriesParams.set("recursive", "true");
       seriesParams.set("includeItemTypes", "Series");
       seriesParams.set("searchTerm", search);
-      seriesParams.set("limit", "10");
+      seriesParams.set("limit", "50");
 
       const seriesList = await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw);
       for (const series of seriesList) {
