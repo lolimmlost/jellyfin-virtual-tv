@@ -3,10 +3,11 @@ import { spawn, execSync, type ChildProcess } from "child_process";
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync, existsSync, readdirSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { randomUUID } from "crypto";
 import { getAllChannels, getSchedule, generateSchedule, getCurrentSlot, getFirstSlot } from "../schedule.js";
 import { getAudioStreamIndex } from "../jellyfin-client.js";
 import { trackStreamStart, trackStreamEnd, trackError } from "../runtime-stats.js";
-import type { Channel } from "../../shared/types.js";
+import type { Channel, ScheduleSlot } from "../../shared/types.js";
 
 export const iptvRouter = Router();
 
@@ -36,15 +37,37 @@ const HLS_LIST_SIZE = 0; // 0 = keep all segments in playlist (event mode)
 // reconnects, instead of resetting to 0 each time. Without this, every
 // reconnect makes the player jump to t=0.
 const channelPtsBase = new Map<string, number>();
+// Wrap every 12h to stay well inside mpegts' 33-bit PTS budget (~26.5h @ 90kHz).
+const PTS_WRAP_SEC = 12 * 3600;
+const PTS_BATCH_GAP_SEC = 1;
 function getPtsOffsetSeconds(channelId: string): number {
   let base = channelPtsBase.get(channelId);
   if (base === undefined) {
     base = Date.now();
     channelPtsBase.set(channelId, base);
   }
-  // Wrap every 12h to stay well inside mpegts' 33-bit PTS budget (~26.5h @ 90kHz).
   const elapsedSec = (Date.now() - base) / 1000;
-  return elapsedSec % (12 * 3600);
+  return elapsedSec % PTS_WRAP_SEC;
+}
+
+// Stop a piped ffmpeg for a client that went away. SIGTERM alone isn't
+// enough: if the client stopped reading first, we've paused stdout and ffmpeg
+// is blocked in write() on a full pipe — the signal only sets a flag and the
+// write restarts, so it never exits. Resuming stdout (callers discard the
+// data once the client is gone) lets that write complete so ffmpeg sees the
+// flag and exits cleanly. Don't destroy the pipe instead: ffmpeg ignores
+// SIGPIPE, and 5.1 segfaults tearing down on EPIPE + SIGTERM (a 300MB+ core
+// dump per disconnect). SIGKILL is the backstop.
+const FFMPEG_KILL_GRACE_MS = 5000;
+const stoppingFfmpeg = new WeakSet<ChildProcess>();
+function stopFfmpeg(proc: ChildProcess) {
+  if (proc.exitCode !== null || proc.signalCode !== null || stoppingFfmpeg.has(proc)) return;
+  stoppingFfmpeg.add(proc);
+  proc.stdout?.resume();
+  proc.kill("SIGTERM");
+  const timer = setTimeout(() => proc.kill("SIGKILL"), FFMPEG_KILL_GRACE_MS);
+  timer.unref();
+  proc.once("exit", () => clearTimeout(timer));
 }
 
 // Re-encode every concat boundary to libx264/aac with fixed parameters.
@@ -126,6 +149,151 @@ function getOrCreateHlsSession(channel: Channel): HlsSession {
   return session;
 }
 
+// ── Batch planning ──────────────────────────────────────────────────────
+// Both loops (HLS and raw TS) track a *content cursor*: the schedule instant
+// that the last emitted frame corresponds to. ffmpeg pulls from Jellyfin
+// faster than real time, so when a batch ends — normally or because one of
+// its files failed to open — the cursor is usually ahead of the wall clock.
+// Resuming from wall-clock "now" in that case replays the tail of the episode
+// that was just shown instead of moving on to the next one. Resuming from
+// max(cursor, now) continues exactly where the output stopped, while still
+// snapping forward to the EPG if the stream ever fell behind it.
+
+const BATCH_SIZE = 3;
+// A batch that produced less than this is treated as a failed start.
+const MIN_PRODUCED_SEC = 1;
+// Skip a slot after this many consecutive failed starts on it, so one
+// unplayable item can't wedge the channel into an endless retry loop.
+const MAX_FAILED_STARTS = 2;
+
+interface BatchPlan {
+  slots: ScheduleSlot[];
+  /** Seek into slots[0], in seconds. */
+  offsetSeconds: number;
+  /** Schedule instant of the first frame this batch emits. */
+  contentStartMs: number;
+  /** Schedule instant at which the last slot ends. */
+  contentEndMs: number;
+}
+
+const toMs = (iso: string) => new Date(iso).getTime();
+
+async function planBatch(channel: Channel, cursorMs: number): Promise<BatchPlan | null> {
+  const schedule = await getSchedule(channel);
+  const startMs = Math.max(cursorMs, Date.now());
+  let idx = schedule.findIndex((s) => toMs(s.startTime) <= startMs && toMs(s.endTime) > startMs);
+  if (idx < 0) return null;
+
+  let offsetMs = startMs - toMs(schedule[idx].startTime);
+  // Almost over — start the next slot cleanly rather than seeking to its last seconds.
+  if (toMs(schedule[idx].endTime) - startMs < 5000) {
+    if (idx + 1 >= schedule.length) return null;
+    idx++;
+    offsetMs = 0;
+  }
+
+  const slots = schedule.slice(idx, idx + BATCH_SIZE);
+  const offsetSeconds = Math.floor(offsetMs / 1000);
+  return {
+    slots,
+    offsetSeconds,
+    contentStartMs: toMs(slots[0].startTime) + offsetSeconds * 1000,
+    contentEndMs: toMs(slots[slots.length - 1].endTime),
+  };
+}
+
+function batchCapSeconds(plan: BatchPlan): number {
+  return Math.max(1, Math.floor((plan.contentEndMs - plan.contentStartMs) / 1000));
+}
+
+async function writeConcatFile(
+  channel: Channel,
+  plan: BatchPlan,
+  concatFile: string,
+  opts: { jellyfinUrl: string; apiKey: string; staticStream: boolean; logTag: string },
+) {
+  let concatContent = "";
+  for (let i = 0; i < plan.slots.length; i++) {
+    const bSlot = plan.slots[i];
+    // Jellyfin keys transcode jobs on media + device + PlaySessionId, not on
+    // StartTimeTicks. Without a unique session, a second request for an
+    // episode already being transcoded is served the existing job from its
+    // original start point — the tune lands minutes behind the EPG.
+    const params = new URLSearchParams({ api_key: opts.apiKey, PlaySessionId: randomUUID() });
+    if (opts.staticStream) {
+      // Passthrough: serve original file, let ffmpeg remux to mpegts
+      params.set("Static", "true");
+    } else {
+      // Transcode: normalize to H.264+AAC for smooth transitions
+      params.set("VideoCodec", "h264");
+      params.set("AudioCodec", "aac");
+      params.set("AudioChannels", "2");
+      params.set("MaxStreamingBitrate", "20000000");
+      params.set("VideoBitRate", "8000000");
+      params.set("AudioBitRate", "192000");
+      params.set("MaxWidth", "1920");
+      params.set("MaxHeight", "1080");
+    }
+    const audioIdx = await getAudioStreamIndex(bSlot.itemId, channel.audioLanguage);
+    if (audioIdx != null) {
+      params.set("AudioStreamIndex", String(audioIdx));
+    } else {
+      console.log(`[${opts.logTag}] ${channel.name}: no '${channel.audioLanguage}' audio track on ${bSlot.title} — using Jellyfin default`);
+    }
+    // Only seek into the first slot (it's already in progress)
+    if (i === 0 && plan.offsetSeconds > 0) {
+      params.set("StartTimeTicks", String(Math.floor(plan.offsetSeconds * 10_000_000)));
+    }
+    const url = `${opts.jellyfinUrl}/Videos/${bSlot.itemId}/stream.ts?${params.toString()}`;
+    concatContent += `file '${url.replace(/'/g, "'\\''")}'\n`;
+  }
+  writeFileSync(concatFile, concatContent);
+}
+
+// Parses ffmpeg's stderr stats ("time=HH:MM:SS.xx") to learn how much content
+// a batch has emitted. That value excludes -output_ts_offset, so it maps
+// directly onto the batch's schedule timeline.
+function createProgressParser() {
+  let carry = "";
+  let seconds = 0;
+  const re = /time=(-?)(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/g;
+  return {
+    push(chunk: Buffer) {
+      const text = carry + chunk.toString("latin1");
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) {
+        if (m[1]) continue; // negative time during startup
+        seconds = Math.max(seconds, Number(m[2]) * 3600 + Number(m[3]) * 60 + Number(m[4]));
+      }
+      carry = text.slice(-64);
+    },
+    get seconds() { return seconds; },
+  };
+}
+
+// Works out where the next batch should resume after ffmpeg exits.
+function advanceCursor(
+  channel: Channel,
+  plan: BatchPlan,
+  producedSec: number,
+  state: { failedStarts: number },
+  logTag: string,
+): number {
+  const produced = Math.min(producedSec, batchCapSeconds(plan));
+  if (produced >= MIN_PRODUCED_SEC) {
+    state.failedStarts = 0;
+    return plan.contentStartMs + produced * 1000;
+  }
+  state.failedStarts++;
+  if (state.failedStarts >= MAX_FAILED_STARTS) {
+    state.failedStarts = 0;
+    console.error(`[${logTag}] ${channel.name}: ${plan.slots[0].title} failed to start ${MAX_FAILED_STARTS}x — skipping to next slot`);
+    return toMs(plan.slots[0].endTime);
+  }
+  return plan.contentStartMs;
+}
+
 async function ensureHlsLoop(channel: Channel, session: HlsSession) {
   if (session.loopRunning || session.stopping) return;
   session.loopRunning = true;
@@ -134,73 +302,30 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
   const apiKey = process.env.JELLYFIN_API_KEY;
   if (!jellyfinUrl || !apiKey) return;
 
-  const BATCH_SIZE = 3;
+  let cursorMs = Date.now();
+  const failState = { failedStarts: 0 };
 
   try {
     while (!session.stopping && (Date.now() - session.lastAccess) < HLS_IDLE_TIMEOUT_MS) {
-      const current = await getCurrentSlot(channel);
-      if (!current) {
+      const plan = await planBatch(channel, cursorMs);
+      if (!plan) {
         await sleep(5000);
         continue;
       }
 
-      const { slot: currentSlot, offsetSeconds } = current;
-      const remainingSeconds = (new Date(currentSlot.endTime).getTime() - Date.now()) / 1000;
-      if (remainingSeconds < 5) {
-        await sleep(2000);
-        continue;
-      }
-
-      // Build batch
-      const schedule = await getSchedule(channel);
-      const now = new Date().toISOString();
-      const currentIdx = schedule.findIndex((s) => s.startTime <= now && s.endTime > now);
-      const batchSlots = currentIdx >= 0
-        ? schedule.slice(currentIdx, currentIdx + BATCH_SIZE)
-        : [currentSlot];
-
-      // Concat playlist file
       const concatFile = join(session.dir, "concat.txt");
-      let concatContent = "";
-      for (let i = 0; i < batchSlots.length; i++) {
-        const bSlot = batchSlots[i];
-        const params = new URLSearchParams({
-          api_key: apiKey,
-          VideoCodec: "h264",
-          AudioCodec: "aac",
-          AudioChannels: "2",
-          MaxStreamingBitrate: "20000000",
-          VideoBitRate: "8000000",
-          AudioBitRate: "192000",
-          MaxWidth: "1920",
-          MaxHeight: "1080",
-        });
-        const audioIdx = await getAudioStreamIndex(bSlot.itemId, channel.audioLanguage);
-        if (audioIdx != null) {
-          params.set("AudioStreamIndex", String(audioIdx));
-        } else {
-          console.log(`[hls] ${channel.name}: no '${channel.audioLanguage}' audio track on ${bSlot.title} — using Jellyfin default`);
-        }
-        if (i === 0 && offsetSeconds > 0) {
-          params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
-        }
-        const url = `${jellyfinUrl}/Videos/${bSlot.itemId}/stream.ts?${params.toString()}`;
-        concatContent += `file '${url.replace(/'/g, "'\\''")}'\n`;
-      }
-      writeFileSync(concatFile, concatContent);
+      await writeConcatFile(channel, plan, concatFile, { jellyfinUrl, apiKey, staticStream: false, logTag: "hls" });
 
-      const lastSlot = batchSlots[batchSlots.length - 1];
-      const batchEndMs = new Date(lastSlot.endTime).getTime();
-      const batchDurationSec = Math.max(1, Math.floor((batchEndMs - Date.now()) / 1000));
-
-      const titles = batchSlots.map((s) => s.title).join(" → ");
-      console.log(`[hls] ${channel.name}: batch of ${batchSlots.length} — ${titles} (offset ${offsetSeconds}s, cap ${batchDurationSec}s)`);
+      const batchDurationSec = batchCapSeconds(plan);
+      const titles = plan.slots.map((s) => s.title).join(" → ");
+      console.log(`[hls] ${channel.name}: batch of ${plan.slots.length} — ${titles} (offset ${plan.offsetSeconds}s, cap ${batchDurationSec}s)`);
 
       const m3u8Path = join(session.dir, "stream.m3u8");
       const segmentPattern = join(session.dir, "seg_%05d.ts");
       const ptsOffset = getPtsOffsetSeconds(channel.id);
+      const progress = createProgressParser();
 
-      await new Promise<void>((resolve) => {
+      const exitCode = await new Promise<number | null>((resolve) => {
         const ffmpegArgs = [
           "-fflags", "+igndts+genpts+discardcorrupt",
           "-f", "concat",
@@ -236,6 +361,7 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
         ffmpeg.stdout?.on("data", () => {}); // drain
 
         ffmpeg.stderr?.on("data", (chunk: Buffer) => {
+          progress.push(chunk);
           stderrChunks.push(chunk);
           stderrLen += chunk.length;
           while (stderrLen > STDERR_MAX && stderrChunks.length > 1) {
@@ -249,21 +375,24 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           session.streamId = null;
           const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
           if (code !== 0 && code !== null && !session.stopping) {
-            const errMsg = `ffmpeg exited ${code} for ${channel.name} (HLS)`;
+            const errMsg = `ffmpeg exited ${code} for ${channel.name} (HLS) after ${Math.round(progress.seconds)}s of ${batchDurationSec}s`;
             console.error(`[hls] ${errMsg}\n[hls] stderr: ${stderrTail}`);
             trackError(`${errMsg} — ${stderrTail}`);
           } else {
-            console.log(`[hls] ${channel.name}: ffmpeg exited code=${code}\n[hls] stderr tail: ${stderrTail.slice(-200)}`);
+            console.log(`[hls] ${channel.name}: ffmpeg exited code=${code} after ${Math.round(progress.seconds)}s of ${batchDurationSec}s\n[hls] stderr tail: ${stderrTail.slice(-200)}`);
           }
           try { unlinkSync(concatFile); } catch {}
-          resolve();
+          resolve(code);
         });
       });
 
-      // ffmpeg finished the batch at full speed — wait until the batch's
-      // wall-clock end time before starting the next one.
-      // Keep lastAccess fresh so the idle cleanup doesn't kill us while sleeping.
-      const waitMs = batchEndMs - Date.now();
+      cursorMs = advanceCursor(channel, plan, progress.seconds, failState, "hls");
+      if (exitCode !== 0 && !session.stopping) await sleep(2000);
+
+      // ffmpeg writes segments faster than real time — wait until the wall
+      // clock reaches the content we've already produced before starting the
+      // next batch. Keep lastAccess fresh so idle cleanup doesn't kill us.
+      const waitMs = cursorMs - Date.now();
       if (waitMs > 0 && !session.stopping) {
         console.log(`[hls] ${channel.name}: batch content ready, waiting ${Math.round(waitMs / 1000)}s until next batch`);
         const waitEnd = Date.now() + waitMs;
@@ -513,9 +642,15 @@ iptvRouter.get("/now/:channelId", async (req, res) => {
 });
 
 // Stream endpoint — continuously chains episodes for seamless live TV
-// Uses a hybrid approach: concat demuxer for gapless transitions (current + next episode),
-// then re-checks the wall clock and builds the next batch. This avoids the stream-ending
-// gap that occurs with single-episode ffmpeg processes while still self-correcting drift.
+// Uses a hybrid approach: concat demuxer for gapless transitions (current + next episodes),
+// then resumes from the content cursor (see planBatch) for the next batch. This avoids the
+// stream-ending gap of single-episode ffmpeg processes while still self-correcting drift.
+
+// How far ahead of the wall clock the TS pipe may run. ffmpeg bursts this
+// much on tune-in (fast startup), then is held to real time by pausing its
+// stdout, so we don't pull hours of transcode out of Jellyfin up front.
+const STREAM_MAX_LEAD_MS = 90_000;
+
 iptvRouter.get("/stream/:channelId", async (req, res) => {
   const channel = findChannel(req, res);
   if (!channel) return;
@@ -533,89 +668,43 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
   let closed = false;
   req.on("close", () => { closed = true; });
 
-  // How many episodes to concat per ffmpeg batch. Higher = fewer gaps but more drift.
-  // 3 is a good balance: ~1-2 hours per batch, drift self-corrects between batches.
-  const BATCH_SIZE = 3;
-
   const streamLoop = async () => {
+    let cursorMs = Date.now();
+    const failState = { failedStarts: 0 };
+    // PTS for this connection's next batch. Seeded from the channel clock so
+    // reconnects keep climbing, then advanced by what each batch actually
+    // emitted — the pipe runs up to STREAM_MAX_LEAD_MS ahead of the wall
+    // clock, so re-reading the clock per batch would jump PTS backwards.
+    let ptsOffset = getPtsOffsetSeconds(channel.id);
+
     while (!closed && !res.writableEnded) {
-      const current = await getCurrentSlot(channel);
-      if (!current) {
+      const plan = await planBatch(channel, cursorMs);
+      if (!plan) {
         await sleep(5000);
         continue;
       }
 
-      const { slot: currentSlot, offsetSeconds } = current;
-      const remainingSeconds = (new Date(currentSlot.endTime).getTime() - Date.now()) / 1000;
-
-      if (remainingSeconds < 5) {
-        await sleep(2000);
-        continue;
-      }
-
-      // Build a batch: current slot + next N-1 slots from the schedule
-      const schedule = await getSchedule(channel);
-      const now = new Date().toISOString();
-      const currentIdx = schedule.findIndex(
-        (s) => s.startTime <= now && s.endTime > now,
-      );
-      const batchSlots = currentIdx >= 0
-        ? schedule.slice(currentIdx, currentIdx + BATCH_SIZE)
-        : [currentSlot];
-
-      // Build concat playlist with all batch slots
       const tempDir = mkdtempSync(join(tmpdir(), "vtv-"));
       const concatFile = join(tempDir, "playlist.txt");
-      let concatContent = "";
+      await writeConcatFile(channel, plan, concatFile, {
+        jellyfinUrl,
+        apiKey,
+        staticStream: channel.streamMode === "copy",
+        logTag: "stream",
+      });
 
-      for (let i = 0; i < batchSlots.length; i++) {
-        const bSlot = batchSlots[i];
-        const params = new URLSearchParams({ api_key: apiKey });
+      // Cap ffmpeg at the batch's scheduled length so the stream stays in
+      // sync with the EPG — without it, transcoding timing differences
+      // accumulate across episodes.
+      const batchDurationSec = batchCapSeconds(plan);
+      const titles = plan.slots.map((s) => s.title).join(" → ");
+      const leadSec = Math.round((plan.contentStartMs - Date.now()) / 1000);
+      console.log(`[stream] ${channel.name}: batch of ${plan.slots.length} — ${titles} (offset ${plan.offsetSeconds}s, cap ${batchDurationSec}s, lead ${leadSec}s, pts +${Math.round(ptsOffset)}s)`);
 
-        if (channel.streamMode === "copy") {
-          // Passthrough: serve original file, let ffmpeg remux to mpegts
-          params.set("Static", "true");
-        } else {
-          // Transcode: normalize to H.264+AAC for smooth transitions
-          params.set("VideoCodec", "h264");
-          params.set("AudioCodec", "aac");
-          params.set("AudioChannels", "2");
-          params.set("MaxStreamingBitrate", "20000000");
-          params.set("VideoBitRate", "8000000");
-          params.set("AudioBitRate", "192000");
-          params.set("MaxWidth", "1920");
-          params.set("MaxHeight", "1080");
-        }
-
-        const audioIdx = await getAudioStreamIndex(bSlot.itemId, channel.audioLanguage);
-        if (audioIdx != null) {
-          params.set("AudioStreamIndex", String(audioIdx));
-        } else {
-          console.log(`[stream] ${channel.name}: no '${channel.audioLanguage}' audio track on ${bSlot.title} — using Jellyfin default`);
-        }
-
-        // Only seek into the first slot (it's already in progress)
-        if (i === 0 && offsetSeconds > 0) {
-          params.set("StartTimeTicks", String(Math.floor(offsetSeconds * 10_000_000)));
-        }
-        const url = `${jellyfinUrl}/Videos/${bSlot.itemId}/stream.ts?${params.toString()}`;
-        concatContent += `file '${url.replace(/'/g, "'\\''")}'\n`;
-      }
-      writeFileSync(concatFile, concatContent);
-
-      // Calculate how long this batch should run on the wall clock.
-      // This caps ffmpeg so the stream stays in sync with the EPG —
-      // without it, transcoding timing differences accumulate across episodes.
-      const lastSlot = batchSlots[batchSlots.length - 1];
-      const batchEndMs = new Date(lastSlot.endTime).getTime();
-      const batchDurationSec = Math.max(1, Math.floor((batchEndMs - Date.now()) / 1000));
-
-      const titles = batchSlots.map((s) => s.title).join(" → ");
-      const ptsOffset = getPtsOffsetSeconds(channel.id);
-      console.log(`[stream] ${channel.name}: batch of ${batchSlots.length} — ${titles} (offset ${offsetSeconds}s, wall-clock cap ${batchDurationSec}s, pts +${Math.round(ptsOffset)}s)`);
+      const progress = createProgressParser();
 
       // Stream this batch via ffmpeg concat — gapless transitions between episodes
-      await new Promise<void>((resolve) => {
+      const exitCode = await new Promise<number | null>((resolve) => {
         const ffmpegArgs = [
           "-fflags", "+igndts+genpts+discardcorrupt",
           "-f", "concat",
@@ -644,43 +733,82 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
         let stderrLen = 0;
         const STDERR_MAX = 8192;
 
-        const onClose = () => {
-          ffmpeg.kill("SIGTERM");
+        // Flow control: pause ffmpeg's stdout (which blocks ffmpeg, which
+        // stops it reading from Jellyfin) while the client socket is backed
+        // up or we're too far ahead of the wall clock.
+        let paused = false;
+        let resBlocked = false;
+        const updateFlow = () => {
+          const leadMs = plan.contentStartMs + progress.seconds * 1000 - Date.now();
+          // Never re-pause an ffmpeg we're stopping — it must drain to exit.
+          const shouldPause = !stoppingFfmpeg.has(ffmpeg) && (resBlocked || leadMs > STREAM_MAX_LEAD_MS);
+          if (shouldPause && !paused) {
+            ffmpeg.stdout.pause();
+            paused = true;
+          } else if (!shouldPause && paused) {
+            ffmpeg.stdout.resume();
+            paused = false;
+          }
         };
+        const pacer = setInterval(updateFlow, 500);
+
+        const onClose = () => stopFfmpeg(ffmpeg);
         req.on("close", onClose);
+        // The client may have left while this batch was being planned.
+        if (closed) onClose();
 
         ffmpeg.stdout.on("data", (chunk: Buffer) => {
-          if (!res.writableEnded && !closed) {
-            res.write(chunk);
-          } else {
-            ffmpeg.kill("SIGTERM");
+          if (res.writableEnded || closed) {
+            stopFfmpeg(ffmpeg);
+            return;
+          }
+          if (!res.write(chunk) && !resBlocked) {
+            resBlocked = true;
+            updateFlow();
+            res.once("drain", () => {
+              resBlocked = false;
+              updateFlow();
+            });
           }
         });
 
         ffmpeg.stderr.on("data", (chunk: Buffer) => {
+          progress.push(chunk);
           stderrChunks.push(chunk);
           stderrLen += chunk.length;
           // Keep only the tail to avoid unbounded memory growth on long streams
           while (stderrLen > STDERR_MAX && stderrChunks.length > 1) {
             stderrLen -= stderrChunks.shift()!.length;
           }
+          updateFlow();
         });
 
         ffmpeg.on("close", (code) => {
+          clearInterval(pacer);
           trackStreamEnd(streamId, code);
           req.removeListener("close", onClose);
           if (code !== 0 && code !== null && !closed) {
             const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
-            const errMsg = `ffmpeg exited ${code} for ${channel.name}`;
+            const errMsg = `ffmpeg exited ${code} for ${channel.name} after ${Math.round(progress.seconds)}s of ${batchDurationSec}s`;
             console.error(`[stream] ${errMsg}\n[stream] stderr: ${stderrTail}`);
             trackError(`${errMsg} — ${stderrTail}`);
           }
           try { unlinkSync(concatFile); } catch {}
           try { rmdirSync(tempDir); } catch {}
-          resolve();
+          resolve(code);
         });
       });
-      // ffmpeg exited naturally (batch finished) — loop re-checks the clock
+
+      // Resume from where the output actually stopped, not from wall-clock
+      // "now" — otherwise an early exit replays the episode we just showed.
+      cursorMs = advanceCursor(channel, plan, progress.seconds, failState, "stream");
+      // Continue PTS just past this batch's last frame. ffmpeg's stats can lag
+      // the final packet by up to ~0.5s on an abnormal exit, so leave a small
+      // forward gap — a gap is harmless, an overlap stalls players.
+      if (progress.seconds > 0) {
+        ptsOffset = (ptsOffset + progress.seconds + PTS_BATCH_GAP_SEC) % PTS_WRAP_SEC;
+      }
+      if (exitCode !== 0 && !closed) await sleep(2000);
     }
 
     if (!res.writableEnded) res.end();

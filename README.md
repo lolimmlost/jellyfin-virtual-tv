@@ -120,6 +120,7 @@ In Jellyfin, go to **Dashboard → Live TV**:
 **Add Tuner:**
 - Type: M3U Tuner
 - URL: `http://your-host:3336/iptv/channels.m3u`
+- Untick **Allow stream sharing**. With sharing on, Jellyfin keeps one buffered copy of a channel and replays it from the start for every new tune or device switch, so viewers land wherever the first tune began instead of where the guide is.
 - Save
 
 **Add Guide Provider:**
@@ -157,6 +158,16 @@ The right-hand pane shows a live 48-hour schedule preview that rebuilds (with a 
 - **Audio Language** — Preferred audio track language per channel (e.g., Japanese for anime channels)
 
 After creating channels, run **Refresh Channels** then **Refresh Guide** in Jellyfin to see them in Live TV.
+
+### Watching without Jellyfin (IPTV players)
+
+Any IPTV player can use the same playlist and guide directly — VLC, UHF, iPlayTV, TiviMate, etc.:
+
+- Playlist: `http://your-host:3336/iptv/channels.m3u`
+- Guide (XMLTV): `http://your-host:3336/iptv/epg.xml`
+- Single channel (e.g. in VLC → Open Network Stream): `http://your-host:3336/iptv/stream/<channelId>.ts`
+
+This skips Jellyfin's Live TV layer and its extra re-encode, so channels start faster, and native players keep playing in picture-in-picture. Jellyfin still serves the episodes underneath.
 
 ## Development
 
@@ -224,6 +235,7 @@ In dev mode `version.json` isn't generated, so `/health` reports `version: "unkn
 | `JELLYFIN_API_KEY` | Yes | — | Jellyfin API key |
 | `BASE_URL` | Yes (production) | Auto-detected from request | External URL clients use to reach this app — gets baked into M3U stream URLs. If malformed (no `scheme://host`), the server logs a warning at startup and ignores it. Auto-detection only works for direct LAN access; behind a reverse proxy it will produce wrong URLs |
 | `PORT` | No | `3000` | Server port |
+| `CHANNEL_ITEM_LIMIT` | No | `5000` | Max items per channel pool (random shuffle draws from this pool) |
 | `DB_PATH` | No | `./data/virtual-tv.db` | SQLite database path. The Docker image volumes `/app/data` so channels persist across redeploys |
 | `SCHEDULE_TZ` | No | `America/Los_Angeles` | IANA timezone that controls schedule day boundaries |
 | `CORS_ORIGIN` | No | `*` | Comma-separated allowed origins. Restrict in production if exposing the UI publicly |
@@ -242,7 +254,7 @@ In dev mode `version.json` isn't generated, so `/health` reports `version: "unkn
 2. The **schedule engine** is a pure function of `(channel, wall-clock time)` — it deterministically locates the slot containing "now" against a fixed anchor, so EPG and stream always agree, and restarts/redeploys never desync the schedule
 3. The **M3U endpoint** lists channels for Jellyfin's IPTV tuner
 4. The **XMLTV endpoint** provides the full programme guide with titles and thumbnails
-5. When a client tunes in, the **stream proxy** builds a 3-episode concat batch capped at the wall-clock end of the last slot. ffmpeg pulls each item from Jellyfin (with `AudioStreamIndex` resolved to the channel's preferred language), re-encodes to fixed H.264 high@4.1 + AAC LC stereo, and applies a per-channel `-output_ts_offset` so PTS keeps climbing across batch restarts and reconnects don't rewind the player
+5. When a client tunes in, the **stream proxy** builds a 3-episode concat batch capped at the wall-clock end of the last slot. ffmpeg pulls each item from Jellyfin (with `AudioStreamIndex` resolved to the channel's preferred language), re-encodes to fixed H.264 high@4.1 + AAC LC stereo, and applies `-output_ts_offset` so PTS keeps climbing: each connection starts from a per-channel clock (so reconnects don't rewind the player) and then carries PTS forward by what each batch actually emitted (so batch handovers never step backwards, even though the pipe runs up to 90s ahead of real time). The next batch resumes from where the output actually stopped (not wall-clock "now"), so an early-ending batch never replays the episode just shown. Every upstream request carries a unique `PlaySessionId` — Jellyfin keys transcode jobs on the play session, not the start time, so without it a second tune of the same episode would be handed the first tune's transcode from its old start point
 
 ### Why re-encode at every batch boundary?
 
@@ -324,6 +336,14 @@ If the API refresh isn't enough, clear the cache files directly:
 ### EPG and stream showing different content
 
 This happens when Jellyfin's cached EPG is from a previous schedule generation. Both the EPG (`/iptv/epg.xml`) and stream (`/iptv/stream/:id`) use the same schedule engine — if they disagree, the issue is always a stale Jellyfin cache. Clear it using the methods above.
+
+### Re-tuning or switching devices goes back to the same spot
+
+Jellyfin's **Allow stream sharing** is on for the M3U tuner. Untick it (Dashboard → Live TV → Tuner Devices → edit). An already-open shared stream survives the setting change; stop playback everywhere, or restart Jellyfin, to drop it.
+
+### Live TV won't start in the Jellyfin iOS app, or stops after ~1 minute
+
+Seen with Jellyfin server 12.4 + iOS app 1.8.0: playback starts, then the app drops its connection within a second and Jellyfin closes the stream. Separately, Jellyfin web on iOS stops after about a minute in picture-in-picture or in the background — iOS suspends the page, so Jellyfin's transcode kill timer fires. In both cases the channel stream is fine; check by opening the channel URL in VLC. Use an IPTV player directly (see *Watching without Jellyfin*).
 
 ### No content on a channel
 
