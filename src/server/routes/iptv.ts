@@ -250,6 +250,12 @@ async function writeConcatFile(
   writeFileSync(concatFile, concatContent);
 }
 
+// ffmpeg echoes the failing input URL, which carries api_key. stderr tails go
+// to the console and to /health/detailed (unauthenticated), so scrub it.
+export function redactSecrets(text: string): string {
+  return text.replace(/(api_key=)[^&\s'"]+/gi, "$1***");
+}
+
 // Parses ffmpeg's stderr stats ("time=HH:MM:SS.xx") to learn how much content
 // a batch has emitted. That value excludes -output_ts_offset, so it maps
 // directly onto the batch's schedule timeline.
@@ -373,7 +379,7 @@ async function ensureHlsLoop(channel: Channel, session: HlsSession) {
           if (session.streamId != null) trackStreamEnd(session.streamId, code);
           session.ffmpeg = null;
           session.streamId = null;
-          const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
+          const stderrTail = redactSecrets(Buffer.concat(stderrChunks).toString("utf8").slice(-500));
           if (code !== 0 && code !== null && !session.stopping) {
             const errMsg = `ffmpeg exited ${code} for ${channel.name} (HLS) after ${Math.round(progress.seconds)}s of ${batchDurationSec}s`;
             console.error(`[hls] ${errMsg}\n[hls] stderr: ${stderrTail}`);
@@ -788,10 +794,16 @@ iptvRouter.get("/stream/:channelId", async (req, res) => {
           trackStreamEnd(streamId, code);
           req.removeListener("close", onClose);
           if (code !== 0 && code !== null && !closed) {
-            const stderrTail = Buffer.concat(stderrChunks).toString("utf8").slice(-500);
+            const stderrTail = redactSecrets(Buffer.concat(stderrChunks).toString("utf8").slice(-500));
             const errMsg = `ffmpeg exited ${code} for ${channel.name} after ${Math.round(progress.seconds)}s of ${batchDurationSec}s`;
             console.error(`[stream] ${errMsg}\n[stream] stderr: ${stderrTail}`);
             trackError(`${errMsg} — ${stderrTail}`);
+          } else if (code === 0 && !closed && progress.seconds < batchDurationSec - 2) {
+            // ffmpeg's concat demuxer exits 0 when a later file fails to open,
+            // so a short clean exit is the only trace of a mid-batch failure.
+            const errLines = redactSecrets(Buffer.concat(stderrChunks).toString("utf8"))
+              .split(/[\r\n]+/).filter((l) => /error|failed|invalid/i.test(l)).slice(-3).join("\n");
+            console.warn(`[stream] ${channel.name}: batch ended early (exit 0) after ${Math.round(progress.seconds)}s of ${batchDurationSec}s${errLines ? `\n[stream] ${errLines}` : ""}`);
           }
           try { unlinkSync(concatFile); } catch {}
           try { rmdirSync(tempDir); } catch {}

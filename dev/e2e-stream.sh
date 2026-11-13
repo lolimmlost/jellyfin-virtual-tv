@@ -15,7 +15,14 @@ cd "$ROOT"
 node dev/mock-jellyfin.mjs "$ROOT/test-media" > "$W/mock.log" 2>&1 & MOCK=$!
 DB_PATH=$W/db.sqlite PORT=3111 JELLYFIN_URL=http://127.0.0.1:8096 JELLYFIN_API_KEY=k BASE_URL=http://127.0.0.1:3111 \
   npx tsx src/server/index.ts > "$W/server.log" 2>&1 & SRV=$!
-trap 'kill $SRV $MOCK 2>/dev/null; pkill -f "tsx src/server/index.ts" 2>/dev/null' EXIT
+# tsx's real server is a grandchild whose cmdline lacks "tsx", and it exits
+# asynchronously; wait for the port to close so a back-to-back run doesn't
+# pass its health check against this run's dying server.
+cleanup() {
+  kill $SRV $MOCK 2>/dev/null; pkill -f "src/server/index.ts" 2>/dev/null
+  for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:3111/health || break; sleep 0.25; done
+}
+trap cleanup EXIT
 for _ in $(seq 1 40); do curl -sf http://127.0.0.1:3111/health >/dev/null && break; sleep 0.5; done
 CH=$(curl -s -XPOST -H 'content-type: application/json' http://127.0.0.1:3111/api/channels \
   -d '{"name":"Comedy","number":5,"filters":{"titleMatch":"the office, parks and recreation"},"shuffleMode":"sequential"}' \
