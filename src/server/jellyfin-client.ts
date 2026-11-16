@@ -8,6 +8,15 @@ const authHeaders = {
 };
 
 const FETCH_TIMEOUT_MS = 15_000;
+// Max items pulled per channel. Items are sorted by name and truncated BEFORE the
+// shuffle, so this is the size of the pool a "random" channel draws from. Keep it
+// well above the library size or the shuffle only reorders the first N titles.
+const DEFAULT_ITEM_LIMIT = Math.max(1, Number(process.env.CHANNEL_ITEM_LIMIT) || 5000);
+// Fields for channel item queries. Deliberately no MediaSources: it carries every
+// item's full stream list (~9KB each), which made a 5000-item query ~48MB and
+// ~12s — near FETCH_TIMEOUT_MS. Scheduling never reads it; the audio-track
+// lookup (getAudioStreamIndex) fetches MediaSources per item on its own.
+const ITEM_FIELDS = "Path,Genres,Tags,Overview,ImageTags,SeriesId";
 
 // Resolve the global stream index for an item's audio track in the requested
 // language. Jellyfin's AudioStreamIndex param is the index into
@@ -62,7 +71,7 @@ export async function getAudioStreamIndex(itemId: string, language: string): Pro
   }
 }
 
-export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): Promise<JellyfinItem[]> {
+export async function fetchItemsForFilter(filter: ChannelFilter, limit = DEFAULT_ITEM_LIMIT): Promise<JellyfinItem[]> {
   if (!JELLYFIN_URL || !JELLYFIN_API_KEY) return [];
 
   // If titleMatch is set, find matching series/movies first, then get their episodes
@@ -78,7 +87,7 @@ export async function fetchItemsForFilter(filter: ChannelFilter, limit = 300): P
 
   const params = new URLSearchParams();
   params.set("recursive", "true");
-  params.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
+  params.set("fields", ITEM_FIELDS);
   params.set("limit", String(limit));
   params.set("sortBy", "SortName");
   params.set("sortOrder", "Ascending");
@@ -157,7 +166,7 @@ async function fetchByTag(filter: ChannelFilter, limit: number): Promise<Jellyfi
     seriesParams.set("includeItemTypes", "Series");
     seriesParams.set("tags", tags);
     seriesParams.set("fields", "Genres,Tags");
-    seriesParams.set("limit", "200");
+    seriesParams.set("limit", String(limit));
 
     if (filter.genres?.length) {
       seriesParams.set("genres", filter.genres.join("|"));
@@ -178,7 +187,7 @@ async function fetchByTag(filter: ChannelFilter, limit: number): Promise<Jellyfi
     movieParams.set("recursive", "true");
     movieParams.set("includeItemTypes", "Movie");
     movieParams.set("tags", tags);
-    movieParams.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
+    movieParams.set("fields", ITEM_FIELDS);
     movieParams.set("limit", String(limit));
 
     if (filter.genres?.length) {
@@ -206,7 +215,7 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       seriesParams.set("recursive", "true");
       seriesParams.set("includeItemTypes", "Series");
       seriesParams.set("searchTerm", search);
-      seriesParams.set("limit", "10");
+      seriesParams.set("limit", "50");
 
       const seriesList = await queryAcrossLibraries(seriesParams, filter.libraryIds, queryItemsRaw);
       for (const series of seriesList) {
@@ -225,7 +234,7 @@ async function fetchByTitleMatch(filter: ChannelFilter, limit: number): Promise<
       movieParams.set("recursive", "true");
       movieParams.set("includeItemTypes", "Movie");
       movieParams.set("searchTerm", search);
-      movieParams.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
+      movieParams.set("fields", ITEM_FIELDS);
       movieParams.set("limit", String(limit));
 
       const movies = await queryAcrossLibraries(movieParams, filter.libraryIds, queryItems);
@@ -246,7 +255,7 @@ async function getEpisodes(seriesId: string, limit: number): Promise<JellyfinIte
   params.set("parentId", seriesId);
   params.set("includeItemTypes", "Episode");
   params.set("recursive", "true");
-  params.set("fields", "Path,Genres,Tags,Overview,MediaSources,ImageTags,SeriesId");
+  params.set("fields", ITEM_FIELDS);
   params.set("sortBy", "SortName");
   params.set("sortOrder", "Ascending");
   params.set("limit", String(limit));
