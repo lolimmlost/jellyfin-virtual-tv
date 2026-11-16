@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — 2026-11-08
+## 1.0.0 — 2026-11-15
 
 First stable release. Virtual live-TV channels built from a Jellyfin library,
 served as an M3U tuner + XMLTV guide for Jellyfin Live TV or any IPTV player.
@@ -32,6 +32,16 @@ served as an M3U tuner + XMLTV guide for Jellyfin Live TV or any IPTV player.
 - **ffmpeg processes leaked** when a player stopped reading (full buffer) and
   then disconnected; each one stayed blocked forever. Disconnects now drain the
   pipe so ffmpeg can exit cleanly on SIGTERM, with SIGKILL as a backstop.
+- **Jellyfin API key exposed** in ffmpeg error output, which reached the
+  console and the unauthenticated `/health/detailed` (`streams.lastError`).
+  `api_key` is now redacted before anything is logged or tracked. If others
+  can reach `/health/detailed` or read old logs, rotate the key.
+- **Random channels cycled the same few shows**: items were sorted by name
+  and cut to 300 before shuffling. The pool is now 5000
+  (`CHANNEL_ITEM_LIMIT`), and channel queries no longer request
+  `MediaSources`, so a large pool loads in under a second instead of ~12s.
+- A batch that ends early without an ffmpeg error (a later file failed to
+  open) is now logged instead of passing silently.
 - Runtime dependency advisories (express → body-parser / proxy-addr / qs)
   updated to patched versions.
 
@@ -44,5 +54,8 @@ served as an M3U tuner + XMLTV guide for Jellyfin Live TV or any IPTV player.
   Jellyfin's kill timer stops the transcode after ~1 minute.
 - Mixing 4:3 and 16:9 shows in one channel can stretch the picture (ffmpeg
   scales later files to the first file's size).
+- The HLS endpoint (`/iptv/hls/…`) does not yet have this release's PTS and
+  ffmpeg-cleanup fixes. Jellyfin and IPTV players use the MPEG-TS stream, which
+  does.
 - Remaining moderate advisories: `fast-xml-parser` (needs a major upgrade) and
   `qs` as pinned by Express 4.

@@ -18,8 +18,19 @@ DB_PATH=$W/db.sqlite PORT=3111 JELLYFIN_URL=http://127.0.0.1:8096 JELLYFIN_API_K
 # tsx's real server is a grandchild whose cmdline lacks "tsx", and it exits
 # asynchronously; wait for the port to close so a back-to-back run doesn't
 # pass its health check against this run's dying server.
+children() {  # pgrep isn't in the slim Docker image; fall back to /proc
+  if command -v pgrep >/dev/null; then pgrep -P "$1"
+  else awk -v p="$1" '{ sub(/^.*\) /, ""); if ($2 == p) print FILENAME }' /proc/[0-9]*/stat 2>/dev/null | cut -d/ -f3
+  fi
+}
+killtree() {  # depth-first, so children are found before their parent exits
+  local c; for c in $(children "$1"); do killtree "$c"; done
+  kill "$1" 2>/dev/null
+}
 cleanup() {
-  kill $SRV $MOCK 2>/dev/null; pkill -f "src/server/index.ts" 2>/dev/null
+  # Kill only this run's process trees: a pattern match on src/server/index.ts
+  # would also kill a dev server (`tsx watch src/server/index.ts`).
+  killtree $SRV; killtree $MOCK
   for _ in $(seq 1 20); do curl -s -o /dev/null http://127.0.0.1:3111/health || break; sleep 0.25; done
 }
 trap cleanup EXIT
